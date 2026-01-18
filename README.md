@@ -4,14 +4,7 @@
 
 AI-Powered API Security Fuzzer that uses LLMs to understand API business context and generate intelligent, contextually relevant attack payloads.
 
-![Indago Demo](demo.gif)
-
-<details>
-<summary>Scan Results Summary</summary>
-
 ![Scan Results](demo-results.gif)
-
-</details>
 
 > **Demo**: Scanning [OWASP Juice Shop](https://owasp.org/www-project-juice-shop/) with AI-powered analysis. The LLM analyzed 12 endpoints and generated **942 context-aware payloads**, discovering **469 vulnerabilities** (177 High, 155 Medium, 137 Low) including SQL injection, authentication bypass, and sensitive data exposure.
 
