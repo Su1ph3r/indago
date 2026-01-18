@@ -162,6 +162,13 @@ func (r *MarkdownReporter) Write(result *types.ScanResult, w io.Writer) error {
 					fmt.Fprintf(w, "**Remediation:**\n\n%s\n\n", f.Remediation)
 				}
 
+				// Steps to Reproduce
+				curlCmd := GenerateCurlFromFinding(&f)
+				if curlCmd != "" {
+					fmt.Fprintf(w, "**Steps to Reproduce:**\n\n")
+					fmt.Fprintf(w, "```bash\n%s\n```\n\n", curlCmd)
+				}
+
 				fmt.Fprintf(w, "---\n\n")
 			}
 		}

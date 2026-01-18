@@ -153,6 +153,7 @@ func (r *SARIFReporter) buildResults(findings []types.Finding) []SARIFResult {
 				Payload:     f.Payload,
 				CWE:         f.CWE,
 				Remediation: f.Remediation,
+				CurlCommand: GenerateCurlFromFinding(&f),
 			},
 		}
 
@@ -244,6 +245,7 @@ type SARIFResultProperties struct {
 	Payload     string `json:"payload,omitempty"`
 	CWE         string `json:"cwe,omitempty"`
 	Remediation string `json:"remediation,omitempty"`
+	CurlCommand string `json:"curlCommand,omitempty"`
 }
 
 // SARIFMessage represents a message
@@ -253,8 +255,8 @@ type SARIFMessage struct {
 
 // SARIFLocation represents a location
 type SARIFLocation struct {
-	PhysicalLocation SARIFPhysicalLocation   `json:"physicalLocation,omitempty"`
-	LogicalLocations []SARIFLogicalLocation  `json:"logicalLocations,omitempty"`
+	PhysicalLocation SARIFPhysicalLocation  `json:"physicalLocation,omitempty"`
+	LogicalLocations []SARIFLogicalLocation `json:"logicalLocations,omitempty"`
 }
 
 // SARIFPhysicalLocation represents a physical location

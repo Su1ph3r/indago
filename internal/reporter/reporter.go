@@ -37,8 +37,22 @@ func NewReporter(format string, options ReportOptions) (Reporter, error) {
 		return NewMarkdownReporter(options), nil
 	case "sarif":
 		return NewSARIFReporter(options), nil
+	case "text", "txt":
+		return NewTextReporter(options), nil
+	case "burp", "burp-xml":
+		return NewBurpReporter(options), nil
 	default:
 		return nil, fmt.Errorf("unsupported report format: %s", format)
+	}
+}
+
+// NewReporterWithColorControl creates a reporter with color control for text format
+func NewReporterWithColorControl(format string, options ReportOptions, noColor bool) (Reporter, error) {
+	switch strings.ToLower(format) {
+	case "text", "txt":
+		return NewTextReporterWithColor(options, noColor), nil
+	default:
+		return NewReporter(format, options)
 	}
 }
 
