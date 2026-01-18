@@ -47,6 +47,8 @@ func (r *HTMLReporter) Write(result *types.ScanResult, w io.Writer) error {
 		"truncate":      TruncateString,
 		"formatTime":    formatTime,
 		"escapeHTML":    template.HTMLEscapeString,
+		"generateCurl":  generateCurlForFinding,
+		"safeID":        sanitizeID,
 	}).Parse(htmlTemplate)
 	if err != nil {
 		return fmt.Errorf("failed to parse template: %w", err)
@@ -103,6 +105,27 @@ func severityIconHTML(severity string) string {
 
 func formatTime(t time.Time) string {
 	return t.Format("2006-01-02 15:04:05")
+}
+
+func generateCurlForFinding(f types.Finding) string {
+	return GenerateCurlFromFinding(&f)
+}
+
+// sanitizeID removes or replaces characters that are not safe for HTML IDs
+func sanitizeID(s string) string {
+	var result strings.Builder
+	for _, c := range s {
+		// Allow alphanumeric, dash, and underscore only
+		if (c >= 'a' && c <= 'z') ||
+			(c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') ||
+			c == '-' || c == '_' {
+			result.WriteRune(c)
+		} else {
+			result.WriteRune('_') // Replace unsafe chars with underscore
+		}
+	}
+	return result.String()
 }
 
 const htmlTemplate = `<!DOCTYPE html>
@@ -233,6 +256,147 @@ const htmlTemplate = `<!DOCTYPE html>
             word-break: break-all;
         }
 
+        .evidence-section {
+            margin-top: 1rem;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .evidence-header {
+            background: var(--bg);
+            padding: 0.75rem 1rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-weight: 600;
+            font-size: 0.875rem;
+        }
+
+        .evidence-header:hover {
+            background: rgba(255,255,255,0.05);
+        }
+
+        .evidence-header .arrow {
+            transition: transform 0.2s;
+        }
+
+        .evidence-section.open .evidence-header .arrow {
+            transform: rotate(90deg);
+        }
+
+        .evidence-content {
+            display: none;
+            padding: 1rem;
+            background: var(--bg);
+        }
+
+        .evidence-section.open .evidence-content {
+            display: block;
+        }
+
+        .http-line {
+            color: var(--info);
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .http-headers {
+            color: var(--text-muted);
+            font-size: 0.8rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .http-body {
+            background: rgba(0,0,0,0.3);
+            padding: 0.75rem;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 0.8rem;
+            max-height: 200px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .status-success { color: #22c55e; }
+        .status-redirect { color: var(--medium); }
+        .status-client-error { color: var(--high); }
+        .status-server-error { color: var(--critical); }
+
+        .matched-patterns {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .pattern-badge {
+            background: rgba(234, 88, 12, 0.2);
+            color: var(--high);
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-family: monospace;
+        }
+
+        .reproduce-section {
+            margin-top: 1rem;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .reproduce-header {
+            background: rgba(34, 197, 94, 0.1);
+            padding: 0.75rem 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-weight: 600;
+            font-size: 0.875rem;
+            color: #22c55e;
+        }
+
+        .reproduce-content {
+            padding: 1rem;
+            background: var(--bg);
+        }
+
+        .curl-command {
+            background: rgba(0,0,0,0.3);
+            padding: 1rem;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 0.8rem;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+            position: relative;
+        }
+
+        .copy-btn {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            background: var(--border);
+            border: none;
+            color: var(--text);
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.75rem;
+        }
+
+        .copy-btn:hover {
+            background: #475569;
+        }
+
+        .copy-btn.copied {
+            background: #22c55e;
+        }
+
         .meta-info {
             display: flex;
             gap: 2rem;
@@ -325,6 +489,71 @@ const htmlTemplate = `<!DOCTYPE html>
                         <p>{{.Remediation}}</p>
                     </div>
                     {{end}}
+                    {{if .Evidence}}
+                    {{if .Evidence.Request}}
+                    <div class="evidence-section" onclick="this.classList.toggle('open')">
+                        <div class="evidence-header">
+                            <span class="arrow">▶</span> Request
+                        </div>
+                        <div class="evidence-content">
+                            <div class="http-line">{{.Evidence.Request.Method}} {{.Evidence.Request.URL}}</div>
+                            {{if .Evidence.Request.Headers}}
+                            <div class="http-headers">
+                                {{range $key, $value := .Evidence.Request.Headers}}{{$key}}: {{$value}}<br>{{end}}
+                            </div>
+                            {{end}}
+                            {{if .Evidence.Request.Body}}
+                            <div class="detail-label">Body</div>
+                            <div class="http-body">{{truncate .Evidence.Request.Body 1000}}</div>
+                            {{end}}
+                        </div>
+                    </div>
+                    {{end}}
+                    {{if .Evidence.Response}}
+                    <div class="evidence-section" onclick="this.classList.toggle('open')">
+                        <div class="evidence-header">
+                            <span class="arrow">▶</span> Response
+                            <span class="{{if lt .Evidence.Response.StatusCode 300}}status-success{{else if lt .Evidence.Response.StatusCode 400}}status-redirect{{else if lt .Evidence.Response.StatusCode 500}}status-client-error{{else}}status-server-error{{end}}">
+                                ({{.Evidence.Response.StatusCode}})
+                            </span>
+                        </div>
+                        <div class="evidence-content">
+                            <div class="http-line">HTTP {{.Evidence.Response.StatusCode}} {{.Evidence.Response.Status}}</div>
+                            {{if .Evidence.Response.Headers}}
+                            <div class="http-headers">
+                                {{range $key, $value := .Evidence.Response.Headers}}{{$key}}: {{$value}}<br>{{end}}
+                            </div>
+                            {{end}}
+                            {{if .Evidence.Response.Body}}
+                            <div class="detail-label">Body</div>
+                            <div class="http-body">{{truncate .Evidence.Response.Body 2000}}</div>
+                            {{end}}
+                        </div>
+                    </div>
+                    {{end}}
+                    {{if .Evidence.MatchedData}}
+                    <div class="detail-section">
+                        <div class="detail-label">Matched Patterns</div>
+                        <div class="matched-patterns">
+                            {{range .Evidence.MatchedData}}<span class="pattern-badge">{{.}}</span>{{end}}
+                        </div>
+                    </div>
+                    {{end}}
+                    {{end}}
+                    {{$curl := generateCurl .}}
+                    {{if $curl}}
+                    <div class="reproduce-section">
+                        <div class="reproduce-header">
+                            <span>Reproduce with curl</span>
+                        </div>
+                        <div class="reproduce-content">
+                            <div class="curl-command" id="curl-{{safeID .ID}}">
+                                <button class="copy-btn" onclick="copyToClipboard('curl-{{safeID .ID}}', this)">Copy</button>
+                                {{$curl}}
+                            </div>
+                        </div>
+                    </div>
+                    {{end}}
                 </div>
             </div>
             {{else}}
@@ -343,5 +572,22 @@ const htmlTemplate = `<!DOCTYPE html>
             <p>Generated by Indago - AI-Powered API Security Fuzzer</p>
         </footer>
     </div>
+    <script>
+        function copyToClipboard(elementId, button) {
+            const element = document.getElementById(elementId);
+            // Get text content, excluding the button text
+            let text = element.textContent.replace('Copy', '').trim();
+            navigator.clipboard.writeText(text).then(function() {
+                button.textContent = 'Copied!';
+                button.classList.add('copied');
+                setTimeout(function() {
+                    button.textContent = 'Copy';
+                    button.classList.remove('copied');
+                }, 2000);
+            }).catch(function(err) {
+                console.error('Failed to copy: ', err);
+            });
+        }
+    </script>
 </body>
 </html>`

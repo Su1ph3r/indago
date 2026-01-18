@@ -103,6 +103,10 @@ func (r *JSONReporter) prepareOutput(result *types.ScanResult) interface{} {
 			}
 		}
 
+		// Add curl command and replicate steps
+		finding.CurlCommand = GenerateCurlFromFinding(&f)
+		finding.ReplicateSteps = GenerateReplicateSteps(&f)
+
 		output.Findings = append(output.Findings, finding)
 	}
 
@@ -129,21 +133,23 @@ type JSONOutput struct {
 
 // JSONFinding is a simplified finding structure
 type JSONFinding struct {
-	ID          string       `json:"id"`
-	Type        string       `json:"type"`
-	Severity    string       `json:"severity"`
-	Confidence  string       `json:"confidence"`
-	Title       string       `json:"title"`
-	Description string       `json:"description"`
-	Endpoint    string       `json:"endpoint"`
-	Method      string       `json:"method"`
-	Parameter   string       `json:"parameter,omitempty"`
-	Payload     string       `json:"payload,omitempty"`
-	CWE         string       `json:"cwe,omitempty"`
-	CVSS        float64      `json:"cvss,omitempty"`
-	Remediation string       `json:"remediation,omitempty"`
-	Timestamp   string       `json:"timestamp"`
-	Evidence    *JSONEvidence `json:"evidence,omitempty"`
+	ID             string        `json:"id"`
+	Type           string        `json:"type"`
+	Severity       string        `json:"severity"`
+	Confidence     string        `json:"confidence"`
+	Title          string        `json:"title"`
+	Description    string        `json:"description"`
+	Endpoint       string        `json:"endpoint"`
+	Method         string        `json:"method"`
+	Parameter      string        `json:"parameter,omitempty"`
+	Payload        string        `json:"payload,omitempty"`
+	CWE            string        `json:"cwe,omitempty"`
+	CVSS           float64       `json:"cvss,omitempty"`
+	Remediation    string        `json:"remediation,omitempty"`
+	Timestamp      string        `json:"timestamp"`
+	Evidence       *JSONEvidence `json:"evidence,omitempty"`
+	CurlCommand    string        `json:"curl_command,omitempty"`
+	ReplicateSteps []string      `json:"replicate_steps,omitempty"`
 }
 
 // JSONEvidence is a simplified evidence structure
