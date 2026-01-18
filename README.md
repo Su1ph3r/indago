@@ -4,6 +4,8 @@
 
 AI-Powered API Security Fuzzer that uses LLMs to understand API business context and generate intelligent, contextually relevant attack payloads.
 
+![Indago Demo](demo.gif)
+
 ## Features
 
 - **AI-Powered Analysis**: Uses LLMs to understand API business logic and generate targeted attacks
@@ -16,16 +18,36 @@ AI-Powered API Security Fuzzer that uses LLMs to understand API business context
 
 ## Installation
 
+### Pre-built Binaries
+
+Download the latest release for your platform from the [Releases](https://github.com/Su1ph3r/indago/releases) page.
+
+```bash
+# Linux (amd64)
+curl -L https://github.com/Su1ph3r/indago/releases/latest/download/indago-linux-amd64.tar.gz | tar xz
+sudo mv indago /usr/local/bin/
+
+# macOS (Apple Silicon)
+curl -L https://github.com/Su1ph3r/indago/releases/latest/download/indago-darwin-arm64.tar.gz | tar xz
+sudo mv indago /usr/local/bin/
+
+# macOS (Intel)
+curl -L https://github.com/Su1ph3r/indago/releases/latest/download/indago-darwin-amd64.tar.gz | tar xz
+sudo mv indago /usr/local/bin/
+```
+
+### Build from Source
+
 ```bash
 # Clone the repository
-git clone https://github.com/su1ph3r/indago.git
+git clone https://github.com/Su1ph3r/indago.git
 cd indago
 
 # Build
 go build -o indago ./cmd/indago
 
 # Or install directly
-go install github.com/su1ph3r/indago/cmd/indago@latest
+go install github.com/Su1ph3r/indago/cmd/indago@latest
 ```
 
 ## Quick Start

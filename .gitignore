@@ -29,3 +29,9 @@ go.work.sum
 # Config files with secrets
 *.local.yaml
 .env
+
+# Build artifacts
+dist/
+
+# VHS tape files
+*.tape
