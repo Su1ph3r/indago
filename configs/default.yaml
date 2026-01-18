@@ -1,0 +1,91 @@
+# Indago Default Configuration
+# Copy this file to ~/.indago.yaml or use --config flag
+
+# LLM Provider Configuration
+provider:
+  # Provider name: openai, anthropic, ollama, lmstudio
+  name: ""
+  # API key (or set OPENAI_API_KEY/ANTHROPIC_API_KEY env vars)
+  api_key: ""
+  # Base URL for local providers (ollama: http://localhost:11434, lmstudio: http://localhost:1234/v1)
+  base_url: ""
+  # Model to use (e.g., gpt-4o, claude-sonnet-4-20250514, llama3)
+  model: ""
+  # Maximum tokens for responses
+  max_tokens: 4096
+  # Temperature for generation (lower = more deterministic)
+  temperature: 0.1
+
+# Scan Settings
+scan:
+  # Number of concurrent requests
+  concurrency: 10
+  # Requests per second (0 = unlimited)
+  rate_limit: 10.0
+  # Request timeout
+  timeout: 30s
+  # Maximum retries for failed requests
+  max_retries: 3
+  # Delay between retries
+  retry_delay: 1s
+  # Follow HTTP redirects
+  follow_redirects: true
+  # Maximum redirects to follow
+  max_redirects: 5
+  # Verify SSL certificates
+  verify_ssl: true
+
+# HTTP Client Settings
+http:
+  # HTTP proxy URL (e.g., http://127.0.0.1:8080 for Burp)
+  proxy_url: ""
+  # User-Agent header
+  user_agent: "Indago/1.0 (Security Scanner)"
+  # Authorization header (e.g., "Bearer <token>")
+  auth_header: ""
+  # Additional headers
+  headers: {}
+  # Cookies
+  cookies: {}
+
+# Output Settings
+output:
+  # Output format: json, html, markdown, sarif
+  format: json
+  # Output file path
+  file: ""
+  # Verbose output
+  verbose: false
+  # Colored terminal output
+  color: true
+  # Include raw request/response in report
+  include_raw: true
+
+# Attack Configuration
+attacks:
+  # Attack types to enable (empty = all)
+  enabled: []
+  # Attack types to disable
+  disabled: []
+  # Maximum payloads per attack type
+  max_payloads_per_type: 50
+
+  # IDOR-specific settings
+  idor:
+    # Range for ID increment/decrement
+    id_range: 10
+    # Test UUID manipulation
+    test_uuids: true
+    # Test user ID swapping
+    swap_users: true
+
+  # Injection-specific settings
+  injection:
+    sqli: true
+    nosqli: true
+    command: true
+    ldap: false
+    xpath: false
+    ssti: true
+    # Delay in seconds for time-based blind detection
+    blind_delay: 5

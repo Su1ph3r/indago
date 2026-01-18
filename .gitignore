@@ -1,0 +1,31 @@
+# Binary
+indago
+indago.exe
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+go.work.sum
+
+# Vendor (uncomment if not using vendor)
+# vendor/
+
+# Config files with secrets
+*.local.yaml
+.env
