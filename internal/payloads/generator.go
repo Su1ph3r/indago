@@ -61,6 +61,14 @@ func NewGenerator(provider llm.Provider, config types.AttackSettings) *Generator
 	g.generators[types.AttackMassAssignment] = NewMassAssignmentGenerator()
 	g.generators[types.AttackSSRF] = NewSSRFGenerator()
 	g.generators[types.AttackPathTraversal] = NewPathTraversalGenerator()
+	g.generators[types.AttackBOLA] = NewBOLAGenerator()
+	g.generators[types.AttackBFLA] = NewBFLAGenerator()
+	g.generators[types.AttackRateLimit] = NewRateLimitGenerator()
+	g.generators[types.AttackDataExposure] = NewDataExposureGenerator()
+	g.generators[types.AttackLDAP] = NewLDAPGenerator()
+	g.generators[types.AttackXPath] = NewXPathGenerator()
+	g.generators[types.AttackSSTI] = NewSSTIGenerator()
+	g.generators[types.AttackJWT] = NewJWTGenerator()
 
 	return g
 }

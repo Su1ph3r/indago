@@ -97,6 +97,10 @@ const (
 	AttackDataExposure   = "data_exposure"
 	AttackSSRF           = "ssrf"
 	AttackPathTraversal  = "path_traversal"
+	AttackLDAP           = "ldap_injection"
+	AttackXPath          = "xpath_injection"
+	AttackSSTI           = "ssti"
+	AttackJWT            = "jwt_manipulation"
 )
 
 // SensitivityLevel constants
