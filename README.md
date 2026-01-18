@@ -6,9 +6,20 @@ AI-Powered API Security Fuzzer that uses LLMs to understand API business context
 
 ![Indago Demo](demo.gif)
 
+<details>
+<summary>Scan Results Summary</summary>
+
+![Scan Results](demo-results.gif)
+
+</details>
+
+> **Demo**: Scanning [OWASP Juice Shop](https://owasp.org/www-project-juice-shop/) with AI-powered analysis. The LLM analyzed 12 endpoints and generated **942 context-aware payloads**, discovering **469 vulnerabilities** (177 High, 155 Medium, 137 Low) including SQL injection, authentication bypass, and sensitive data exposure.
+
 ## Features
 
 - **AI-Powered Analysis**: Uses LLMs to understand API business logic and generate targeted attacks
+- **Context-Aware Payloads**: LLM-generated payloads based on endpoint semantics and business context
+- **Parallel LLM Processing**: Concurrent LLM calls for fast payload generation on powerful hardware
 - **Multiple Input Formats**: OpenAPI/Swagger, Postman, HAR, Burp Suite exports, raw URLs
 - **Multiple LLM Providers**: OpenAI, Anthropic Claude, Ollama, LM Studio
 - **Comprehensive Attack Coverage**: IDOR, SQLi, NoSQLi, Command Injection, XSS, Auth Bypass, Mass Assignment, SSRF, Path Traversal
@@ -57,6 +68,10 @@ go install github.com/Su1ph3r/indago/cmd/indago@latest
 # Scan an OpenAPI spec with AI analysis (requires API key)
 export ANTHROPIC_API_KEY=your-api-key
 indago scan --spec api.yaml --provider anthropic
+
+# Full AI-powered scan with dynamic LLM payloads (local LLM)
+indago scan --spec api.yaml --provider lmstudio --llm-url http://localhost:1234/v1 \
+  --use-llm-payloads --llm-concurrency 20
 
 # Scan without AI (uses heuristic-based analysis)
 indago scan --spec api.yaml
@@ -139,10 +154,12 @@ Input Flags:
       --endpoints strings  Raw endpoints to scan
 
 LLM Flags:
-  -p, --provider string    LLM provider (openai, anthropic, ollama, lmstudio)
-      --model string       LLM model to use
-      --api-key string     API key for LLM provider
-      --llm-url string     Base URL for local LLM
+  -p, --provider string       LLM provider (openai, anthropic, ollama, lmstudio)
+      --model string          LLM model to use
+      --api-key string        API key for LLM provider
+      --llm-url string        Base URL for local LLM
+      --use-llm-payloads      Generate context-aware payloads using LLM
+      --llm-concurrency int   Concurrent LLM payload generators (default 8)
 
 Output Flags:
   -o, --output string      Output file path (text format prints to stdout if not specified)

@@ -1,6 +1,8 @@
 // Package types provides core data structures for Indago
 package types
 
+import "encoding/json"
+
 // Endpoint represents a unified API endpoint model
 type Endpoint struct {
 	Method      string            `json:"method" yaml:"method"`
@@ -72,14 +74,82 @@ type AuthConfig struct {
 	Extra        map[string]string `json:"extra,omitempty" yaml:"extra,omitempty"`
 }
 
+// FlexibleString can unmarshal from either a string or an array of strings
+type FlexibleString string
+
+// UnmarshalJSON handles both string and array inputs
+func (f *FlexibleString) UnmarshalJSON(data []byte) error {
+	// Try to unmarshal as a string first
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		*f = FlexibleString(s)
+		return nil
+	}
+
+	// Try to unmarshal as an array
+	var arr []string
+	if err := json.Unmarshal(data, &arr); err == nil {
+		if len(arr) > 0 {
+			*f = FlexibleString(arr[0])
+		}
+		return nil
+	}
+
+	// If neither works, just set empty
+	*f = ""
+	return nil
+}
+
+// String returns the string value
+func (f FlexibleString) String() string {
+	return string(f)
+}
+
+// FlexibleStringSlice can unmarshal from a string array, object, or string
+type FlexibleStringSlice []string
+
+// UnmarshalJSON handles various input formats
+func (f *FlexibleStringSlice) UnmarshalJSON(data []byte) error {
+	// Try to unmarshal as an array first
+	var arr []string
+	if err := json.Unmarshal(data, &arr); err == nil {
+		*f = arr
+		return nil
+	}
+
+	// Try to unmarshal as a single string
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		*f = []string{s}
+		return nil
+	}
+
+	// Try to unmarshal as an object with string values
+	var obj map[string]interface{}
+	if err := json.Unmarshal(data, &obj); err == nil {
+		var result []string
+		for _, v := range obj {
+			if str, ok := v.(string); ok {
+				result = append(result, str)
+			}
+		}
+		*f = result
+		return nil
+	}
+
+	// If nothing works, set empty
+	*f = []string{}
+	return nil
+}
+
 // AttackVector represents a suggested attack type
 type AttackVector struct {
-	Type        string   `json:"type" yaml:"type"`
-	Category    string   `json:"category" yaml:"category"`
-	Priority    string   `json:"priority" yaml:"priority"` // high, medium, low
-	Rationale   string   `json:"rationale,omitempty" yaml:"rationale,omitempty"`
-	TargetParam string   `json:"target_param,omitempty" yaml:"target_param,omitempty"`
-	Payloads    []string `json:"payloads,omitempty" yaml:"payloads,omitempty"`
+	Type        string              `json:"type" yaml:"type"`
+	Category    string              `json:"category" yaml:"category"`
+	Priority    string              `json:"priority" yaml:"priority"` // high, medium, low
+	Rationale   string              `json:"rationale,omitempty" yaml:"rationale,omitempty"`
+	TargetParam FlexibleString      `json:"target_param,omitempty" yaml:"target_param,omitempty"`
+	Payloads    FlexibleStringSlice `json:"payloads,omitempty" yaml:"payloads,omitempty"`
 }
 
 // AttackCategory constants
