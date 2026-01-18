@@ -258,7 +258,7 @@ func (e *ContextExtractor) SuggestAttacksHeuristic(ep types.Endpoint) []types.At
 				Category:    "injection",
 				Priority:    "medium",
 				Rationale:   "String parameter may be vulnerable to SQL injection",
-				TargetParam: param.Name,
+				TargetParam: types.FlexibleString(param.Name),
 			})
 		}
 	}

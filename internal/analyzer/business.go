@@ -178,11 +178,12 @@ Provide a JSON response with the following structure:
       "data_exposure_risk": true/false,
       "suggested_attacks": [
         {
-          "type": "idor|sqli|auth_bypass|etc",
-          "category": "injection|authorization|etc",
-          "priority": "high|medium|low",
+          "type": "sqli",
+          "category": "injection",
+          "priority": "high",
           "rationale": "Why this attack is relevant",
-          "target_param": "parameter name to target"
+          "target_param": "id",
+          "payloads": ["' OR '1'='1", "1; DROP TABLE users--"]
         }
       ],
       "target_params": ["param1", "param2"]

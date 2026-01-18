@@ -65,10 +65,12 @@ type OutputSettings struct {
 
 // AttackSettings holds attack configuration
 type AttackSettings struct {
-	Enabled           []string `yaml:"enabled" mapstructure:"enabled"`     // Empty = all
-	Disabled          []string `yaml:"disabled" mapstructure:"disabled"`
-	MaxPayloadsPerType int     `yaml:"max_payloads_per_type" mapstructure:"max_payloads_per_type"`
-	CustomPayloads    string   `yaml:"custom_payloads" mapstructure:"custom_payloads"` // Path to custom payloads file
+	Enabled            []string `yaml:"enabled" mapstructure:"enabled"`     // Empty = all
+	Disabled           []string `yaml:"disabled" mapstructure:"disabled"`
+	MaxPayloadsPerType int      `yaml:"max_payloads_per_type" mapstructure:"max_payloads_per_type"`
+	CustomPayloads     string   `yaml:"custom_payloads" mapstructure:"custom_payloads"` // Path to custom payloads file
+	UseLLMPayloads     bool     `yaml:"use_llm_payloads" mapstructure:"use_llm_payloads"` // Generate additional context-aware payloads using LLM
+	LLMConcurrency     int      `yaml:"llm_concurrency" mapstructure:"llm_concurrency"` // Concurrent LLM calls for payload generation
 
 	// Category-specific settings
 	IDOR      IDORSettings      `yaml:"idor" mapstructure:"idor"`
@@ -127,6 +129,8 @@ func DefaultConfig() *Config {
 			Enabled:            []string{},
 			Disabled:           []string{},
 			MaxPayloadsPerType: 50,
+			UseLLMPayloads:     false,
+			LLMConcurrency:     8,
 			IDOR: IDORSettings{
 				IDRange:   10,
 				TestUUIDs: true,

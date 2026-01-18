@@ -3,6 +3,8 @@ package payloads
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/su1ph3r/indago/internal/llm"
 	"github.com/su1ph3r/indago/pkg/types"
@@ -74,7 +76,7 @@ func NewGenerator(provider llm.Provider, config types.AttackSettings) *Generator
 }
 
 // GenerateForEndpoint generates all applicable payloads for an endpoint
-func (g *Generator) GenerateForEndpoint(endpoint types.Endpoint) []FuzzRequest {
+func (g *Generator) GenerateForEndpoint(ctx context.Context, endpoint types.Endpoint) []FuzzRequest {
 	var requests []FuzzRequest
 
 	// Determine which attack types to use
@@ -116,6 +118,43 @@ func (g *Generator) GenerateForEndpoint(endpoint types.Endpoint) []FuzzRequest {
 							Position: "body",
 						})
 					}
+				}
+			}
+		}
+	}
+
+	// Add LLM-suggested payloads from endpoint analysis
+	for _, payload := range g.getLLMPayloads(endpoint) {
+		if targetParam := g.findTargetParam(endpoint, payload); targetParam != nil {
+			requests = append(requests, FuzzRequest{
+				Endpoint: endpoint,
+				Param:    targetParam,
+				Payload:  payload,
+				Original: g.getOriginalValue(targetParam),
+				Position: targetParam.In,
+			})
+		}
+	}
+
+	// Generate dynamic LLM payloads if enabled
+	if g.config.UseLLMPayloads && g.provider != nil {
+		llmPayloads, err := g.GenerateWithLLM(ctx, endpoint)
+		if err == nil && len(llmPayloads) > 0 {
+			for _, payload := range llmPayloads {
+				// Add source metadata
+				if payload.Metadata == nil {
+					payload.Metadata = make(map[string]string)
+				}
+				payload.Metadata["source"] = "llm-dynamic"
+
+				if targetParam := g.findTargetParam(endpoint, payload); targetParam != nil {
+					requests = append(requests, FuzzRequest{
+						Endpoint: endpoint,
+						Param:    targetParam,
+						Payload:  payload,
+						Original: g.getOriginalValue(targetParam),
+						Position: targetParam.In,
+					})
 				}
 			}
 		}
@@ -228,23 +267,67 @@ func (g *Generator) limitPayloads(requests []FuzzRequest) []FuzzRequest {
 
 // buildPayloadPrompt builds a prompt for LLM payload generation
 func (g *Generator) buildPayloadPrompt(endpoint types.Endpoint) string {
-	return `Generate targeted security testing payloads for this endpoint:
+	var sb strings.Builder
 
-Endpoint: ` + endpoint.Method + ` ` + endpoint.Path + `
-Business Context: ` + endpoint.BusinessContext + `
+	sb.WriteString("Generate targeted security testing payloads for this API endpoint:\n\n")
+	sb.WriteString(fmt.Sprintf("Endpoint: %s %s\n", endpoint.Method, endpoint.Path))
 
-Generate payloads as JSON array:
+	if endpoint.BusinessContext != "" {
+		sb.WriteString(fmt.Sprintf("Business Context: %s\n", endpoint.BusinessContext))
+	}
+
+	if endpoint.Description != "" {
+		sb.WriteString(fmt.Sprintf("Description: %s\n", endpoint.Description))
+	}
+
+	if endpoint.SensitivityLevel != "" {
+		sb.WriteString(fmt.Sprintf("Sensitivity: %s\n", endpoint.SensitivityLevel))
+	}
+
+	// Include parameter details
+	if len(endpoint.Parameters) > 0 {
+		sb.WriteString("\nParameters:\n")
+		for _, p := range endpoint.Parameters {
+			sb.WriteString(fmt.Sprintf("  - %s (%s, in: %s)", p.Name, p.Type, p.In))
+			if p.Description != "" {
+				sb.WriteString(fmt.Sprintf(" - %s", p.Description))
+			}
+			sb.WriteString("\n")
+		}
+	}
+
+	// Include body fields
+	if endpoint.Body != nil && len(endpoint.Body.Fields) > 0 {
+		sb.WriteString("\nBody Fields:\n")
+		for _, f := range endpoint.Body.Fields {
+			sb.WriteString(fmt.Sprintf("  - %s (%s)", f.Name, f.Type))
+			if f.Description != "" {
+				sb.WriteString(fmt.Sprintf(" - %s", f.Description))
+			}
+			if f.Required {
+				sb.WriteString(" [required]")
+			}
+			sb.WriteString("\n")
+		}
+	}
+
+	sb.WriteString(`
+Generate payloads as JSON array. Include a "metadata" object with "target_param" set to the parameter name:
 [
   {
     "value": "the payload string",
-    "type": "attack type",
+    "type": "attack type (e.g., sqli, xss, idor, auth_bypass)",
     "category": "category",
-    "description": "what this tests"
+    "description": "what this tests",
+    "metadata": {"target_param": "parameter_name"}
   }
 ]
 
-Focus on business-logic specific attacks based on the context.
-Respond with JSON only.`
+Focus on business-logic specific attacks based on the context and parameter semantics.
+Generate 3-5 highly targeted payloads.
+Respond with JSON only.`)
+
+	return sb.String()
 }
 
 // fieldToParam converts a body field to a parameter for consistent handling
@@ -270,4 +353,63 @@ func uniqueStrings(slice []string) []string {
 		}
 	}
 	return result
+}
+
+// getLLMPayloads extracts payloads from LLM-suggested attacks on the endpoint
+func (g *Generator) getLLMPayloads(endpoint types.Endpoint) []Payload {
+	var payloads []Payload
+	for _, attack := range endpoint.SuggestedAttacks {
+		for _, p := range attack.Payloads {
+			payloads = append(payloads, Payload{
+				Value:       p,
+				Type:        attack.Type,
+				Category:    attack.Category,
+				Description: fmt.Sprintf("LLM-suggested: %s", attack.Rationale),
+				Metadata: map[string]string{
+					"source":       "llm",
+					"target_param": attack.TargetParam.String(),
+					"priority":     attack.Priority,
+				},
+			})
+		}
+	}
+	return payloads
+}
+
+// findTargetParam finds the parameter that matches the payload's target
+func (g *Generator) findTargetParam(endpoint types.Endpoint, payload Payload) *types.Parameter {
+	targetName := ""
+	if payload.Metadata != nil {
+		targetName = payload.Metadata["target_param"]
+	}
+
+	// Check endpoint parameters
+	for i := range endpoint.Parameters {
+		if strings.EqualFold(endpoint.Parameters[i].Name, targetName) {
+			return &endpoint.Parameters[i]
+		}
+	}
+
+	// Check body fields
+	if endpoint.Body != nil {
+		for i := range endpoint.Body.Fields {
+			if strings.EqualFold(endpoint.Body.Fields[i].Name, targetName) {
+				return fieldToParam(&endpoint.Body.Fields[i])
+			}
+		}
+	}
+
+	// Fallback: first string parameter
+	for i := range endpoint.Parameters {
+		if endpoint.Parameters[i].Type == "string" || endpoint.Parameters[i].Type == "" {
+			return &endpoint.Parameters[i]
+		}
+	}
+
+	// Fallback: first body field if no params
+	if endpoint.Body != nil && len(endpoint.Body.Fields) > 0 {
+		return fieldToParam(&endpoint.Body.Fields[0])
+	}
+
+	return nil
 }
