@@ -13,7 +13,8 @@ AI-Powered API Security Fuzzer that uses LLMs to understand API business context
 - **Multiple LLM Providers**: OpenAI, Anthropic Claude, Ollama, LM Studio
 - **Comprehensive Attack Coverage**: IDOR, SQLi, NoSQLi, Command Injection, XSS, Auth Bypass, Mass Assignment, SSRF, Path Traversal
 - **Smart Detection**: Anomaly detection, error pattern matching, sensitive data leak detection
-- **Multiple Output Formats**: JSON, HTML, Markdown, SARIF (for CI/CD integration)
+- **Multiple Output Formats**: JSON, HTML, Markdown, SARIF, Text (Nmap-style), Burp Suite XML
+- **Reproducible Findings**: Every finding includes curl commands for easy reproduction
 - **Concurrent Scanning**: Worker pool with rate limiting and session management
 
 ## Installation
@@ -78,6 +79,12 @@ indago scan --url https://api.example.com --endpoints "/users,/orders,/products/
 # Output to HTML report
 indago scan --spec api.yaml -o report -f html
 
+# Nmap-style text output to terminal
+indago scan --spec api.yaml -f text
+
+# Export for Burp Suite
+indago scan --spec api.yaml -f burp -o findings.xml
+
 # Use with proxy (e.g., Burp Suite)
 indago scan --spec api.yaml --proxy http://127.0.0.1:8080
 ```
@@ -138,9 +145,10 @@ LLM Flags:
       --llm-url string     Base URL for local LLM
 
 Output Flags:
-  -o, --output string      Output file path
-  -f, --format string      Output format (json, html, markdown, sarif)
+  -o, --output string      Output file path (text format prints to stdout if not specified)
+  -f, --format string      Output format (json, html, markdown, sarif, text, burp)
       --verbose            Verbose output
+      --no-color           Disable colored output (useful for piping text format)
 
 HTTP Flags:
       --auth-header string    Authorization header
@@ -191,10 +199,48 @@ indago config show
 
 ## Output Formats
 
-- **JSON**: Machine-readable format for integration
-- **HTML**: Interactive web report with dark theme
-- **Markdown**: Documentation-friendly format
-- **SARIF**: Static Analysis Results Interchange Format for CI/CD
+| Format | Extension | Description |
+|--------|-----------|-------------|
+| `json` | `.json` | Machine-readable format with curl commands and replication steps |
+| `html` | `.html` | Interactive web report with dark theme and copy-to-clipboard curl commands |
+| `markdown` | `.md` | Documentation-friendly format with code blocks |
+| `sarif` | `.sarif` | Static Analysis Results Interchange Format for CI/CD integration |
+| `text` | `.txt` | Nmap-style terminal output (prints to stdout by default) |
+| `burp` | `.xml` | Burp Suite compatible XML for importing findings |
+
+### Text Output (Nmap-style)
+
+```bash
+# Print to terminal
+indago scan --spec api.yaml -f text
+
+# Pipe to file or other tools
+indago scan --spec api.yaml -f text --no-color | tee report.txt
+
+# Save directly to file
+indago scan --spec api.yaml -f text -o report.txt
+```
+
+### Burp Suite Integration
+
+Export findings for import into Burp Suite:
+
+```bash
+indago scan --spec api.yaml -f burp -o findings.xml
+# Then: Burp Suite > Target > Import > Paste from file
+```
+
+### Curl Commands for Reproduction
+
+All output formats now include curl commands for easy reproduction of findings:
+
+```bash
+# JSON output includes curl_command and replicate_steps fields
+indago scan --spec api.yaml -f json | jq '.findings[0].curl_command'
+
+# HTML report has "Reproduce with curl" section with copy button
+# Markdown includes "Steps to Reproduce" code blocks
+```
 
 ## Architecture
 
