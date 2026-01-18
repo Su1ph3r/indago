@@ -1,6 +1,6 @@
-# Binary
-indago
-indago.exe
+# Binary (root level only)
+/indago
+/indago.exe
 
 # IDE
 .idea/
