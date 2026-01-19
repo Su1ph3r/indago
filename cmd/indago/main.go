@@ -28,7 +28,7 @@ import (
 )
 
 var (
-	version = "1.0.1"
+	version = "1.0.2"
 	cfgFile string
 	config  *types.Config
 )
