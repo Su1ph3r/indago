@@ -10,16 +10,27 @@ AI-Powered API Security Fuzzer that uses LLMs to understand API business context
 
 ## Features
 
+### Core Features
 - **AI-Powered Analysis**: Uses LLMs to understand API business logic and generate targeted attacks
 - **Context-Aware Payloads**: LLM-generated payloads based on endpoint semantics and business context
 - **Parallel LLM Processing**: Concurrent LLM calls for fast payload generation on powerful hardware
-- **Multiple Input Formats**: OpenAPI/Swagger, Postman, HAR, Burp Suite exports, raw URLs
+- **Multiple Input Formats**: OpenAPI/Swagger, Postman, HAR, Burp Suite exports, raw URLs, GraphQL
 - **Multiple LLM Providers**: OpenAI, Anthropic Claude, Ollama, LM Studio
-- **Comprehensive Attack Coverage**: IDOR, SQLi, NoSQLi, Command Injection, XSS, Auth Bypass, Mass Assignment, SSRF, Path Traversal
+- **Comprehensive Attack Coverage**: IDOR, SQLi, NoSQLi, Command Injection, XSS, Auth Bypass, Mass Assignment, SSRF, Path Traversal, SSTI, JWT, LDAP, XPath
 - **Smart Detection**: Anomaly detection, error pattern matching, sensitive data leak detection
 - **Multiple Output Formats**: JSON, HTML, Markdown, SARIF, Text (Nmap-style), Burp Suite XML
 - **Reproducible Findings**: Every finding includes curl commands for easy reproduction
 - **Concurrent Scanning**: Worker pool with rate limiting and session management
+
+### Advanced Features
+- **GraphQL Support**: Introspection-based scanning, depth attacks, batch attacks, alias attacks
+- **Multi-Auth Differential Analysis**: Compare responses across auth contexts to detect BOLA/IDOR
+- **Stateful Session Tracking**: Extract and inject tokens/IDs across request chains
+- **Attack Chains**: Multi-step attack sequences for privilege escalation and data exfiltration
+- **WAF Detection & Bypass**: Detect WAFs and attempt bypass techniques
+- **Out-of-Band (OOB) Detection**: Callback server for blind SSRF, XXE, and command injection
+- **Schema Inference**: Generate OpenAPI specs from observed traffic
+- **Business Rules Engine**: Define custom validation rules for your API
 
 ## Installation
 
@@ -131,6 +142,74 @@ export INDAGO_PROVIDER_API_KEY=sk-xxx
 export OPENAI_API_KEY=sk-xxx  # Also supported
 ```
 
+### Advanced Configuration
+
+```yaml
+# Attack chains for multi-step exploitation
+chains:
+  enabled: true
+  max_depth: 5
+  chain_file: "chains.yaml"  # Custom chain definitions
+
+# Stateful session tracking
+state:
+  enabled: true
+  extract_file: "extractors.yaml"  # Custom extraction rules
+  inject: true  # Inject extracted values into subsequent requests
+
+# Multi-auth differential analysis (detect BOLA/IDOR)
+differential:
+  enabled: true
+  auth_file: "auth-contexts.yaml"  # Or inline:
+  auth_contexts:
+    - name: admin
+      auth_type: bearer
+      token: "admin-token"
+      priority: 0  # Lower = higher privilege
+    - name: user
+      auth_type: bearer
+      token: "user-token"
+      priority: 1
+    - name: anonymous
+      auth_type: none
+      priority: 100
+
+# GraphQL scanning
+graphql:
+  endpoint: "/graphql"
+  introspect: true
+  max_depth: 10
+  max_batch_size: 100
+  max_aliases: 50
+
+# Business rules validation
+rules:
+  file: "rules.yaml"
+  strict: false  # Fail scan if rules violated
+
+# Schema inference
+inference:
+  enabled: true
+  output_file: "inferred-api.yaml"
+  min_confidence: 0.7
+  cluster_threshold: 0.8
+
+# Out-of-band callback detection
+callback:
+  enabled: true
+  external_url: "https://your-callback-server.com"
+  http_port: 8888
+  dns_port: 5353
+  timeout: 30s
+
+# WAF detection and bypass
+waf:
+  detect: true
+  bypass: true
+  threshold: 5  # Consecutive blocks to trigger detection
+  max_retries: 3
+```
+
 ## CLI Reference
 
 ### Scan Command
@@ -191,6 +270,8 @@ indago config show
 
 ## Attack Types
 
+### Standard Attacks
+
 | Type | Description |
 |------|-------------|
 | `idor` | Insecure Direct Object Reference |
@@ -206,6 +287,41 @@ indago config show
 | `bfla` | Broken Function Level Authorization |
 | `rate_limit` | Rate Limit Bypass |
 | `data_exposure` | Sensitive Data Exposure |
+| `ssti` | Server-Side Template Injection |
+| `jwt_manipulation` | JWT Token Manipulation |
+| `ldap_injection` | LDAP Injection |
+| `xpath_injection` | XPath Injection |
+
+### GraphQL Attacks
+
+| Type | Description |
+|------|-------------|
+| `graphql_depth` | Deep nesting DoS attacks |
+| `graphql_batch` | Batch query abuse |
+| `graphql_introspection` | Introspection information disclosure |
+| `graphql_alias` | Alias-based resource exhaustion |
+
+### Blind/Out-of-Band Attacks
+
+| Type | Description |
+|------|-------------|
+| `blind_ssrf` | Blind SSRF with OOB callback |
+| `blind_xxe` | Blind XXE with OOB callback |
+| `blind_command_injection` | Blind command injection with OOB callback |
+
+### Attack Chains
+
+| Type | Description |
+|------|-------------|
+| `privilege_escalation_chain` | Multi-step privilege escalation |
+| `data_leakage_chain` | Chain of requests to exfiltrate data |
+| `idor_chain` | Sequential IDOR exploitation |
+
+### WAF Bypass
+
+| Type | Description |
+|------|-------------|
+| `waf_bypass` | WAF evasion techniques |
 
 ## Output Formats
 

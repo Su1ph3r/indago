@@ -35,3 +35,7 @@ dist/
 
 # VHS tape files
 *.tape
+
+# AI assistant files
+CLAUDE.md
+.claude/
