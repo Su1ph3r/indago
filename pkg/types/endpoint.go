@@ -171,6 +171,25 @@ const (
 	AttackXPath          = "xpath_injection"
 	AttackSSTI           = "ssti"
 	AttackJWT            = "jwt_manipulation"
+
+	// GraphQL attack types
+	AttackGraphQLDepth      = "graphql_depth"
+	AttackGraphQLBatch      = "graphql_batch"
+	AttackGraphQLIntrospect = "graphql_introspection"
+	AttackGraphQLAlias      = "graphql_alias"
+
+	// Blind/Out-of-band attack types
+	AttackBlindSSRF      = "blind_ssrf"
+	AttackBlindXXE       = "blind_xxe"
+	AttackBlindCmdInject = "blind_command_injection"
+
+	// Attack chain types
+	AttackChainPrivEsc  = "privilege_escalation_chain"
+	AttackChainDataLeak = "data_leakage_chain"
+	AttackChainIDOR     = "idor_chain"
+
+	// WAF bypass
+	AttackWAFBypass = "waf_bypass"
 )
 
 // SensitivityLevel constants
