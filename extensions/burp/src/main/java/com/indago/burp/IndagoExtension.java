@@ -13,6 +13,7 @@ import com.indago.burp.model.ExportItem;
 import com.indago.burp.scanner.IndagoScanLauncher;
 import com.indago.burp.ui.IndagoTab;
 
+import javax.swing.SwingUtilities;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -148,9 +149,7 @@ public class IndagoExtension implements BurpExtension {
      */
     public void addToExportQueue(ExportItem item) {
         exportQueue.add(item);
-        if (mainTab != null) {
-            mainTab.refreshExportQueue();
-        }
+        refreshExportQueueUI();
         logging.logToOutput("Added to export queue: " + item.getMethod() + " " + item.getUrl());
     }
 
@@ -159,9 +158,7 @@ public class IndagoExtension implements BurpExtension {
      */
     public void clearExportQueue() {
         exportQueue.clear();
-        if (mainTab != null) {
-            mainTab.refreshExportQueue();
-        }
+        refreshExportQueueUI();
         logging.logToOutput("Export queue cleared");
     }
 
@@ -169,15 +166,24 @@ public class IndagoExtension implements BurpExtension {
      * Remove items from the export queue by indices.
      */
     public void removeFromExportQueue(int[] indices) {
-        // Sort in reverse order to avoid index shifting issues
-        java.util.Arrays.sort(indices);
-        for (int i = indices.length - 1; i >= 0; i--) {
-            if (indices[i] >= 0 && indices[i] < exportQueue.size()) {
-                exportQueue.remove(indices[i]);
+        synchronized (exportQueue) {
+            // Sort in reverse order to avoid index shifting issues
+            java.util.Arrays.sort(indices);
+            for (int i = indices.length - 1; i >= 0; i--) {
+                if (indices[i] >= 0 && indices[i] < exportQueue.size()) {
+                    exportQueue.remove(indices[i]);
+                }
             }
         }
+        refreshExportQueueUI();
+    }
+
+    /**
+     * Refresh export queue UI on the EDT.
+     */
+    private void refreshExportQueueUI() {
         if (mainTab != null) {
-            mainTab.refreshExportQueue();
+            SwingUtilities.invokeLater(() -> mainTab.refreshExportQueue());
         }
     }
 

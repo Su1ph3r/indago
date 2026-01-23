@@ -182,9 +182,11 @@ public class FindingsPanel extends JPanel {
         }
 
         int added = 0;
-        for (int row : selectedRows) {
-            if (row >= 0 && row < findings.size()) {
-                IndagoFinding finding = findings.get(row);
+        for (int viewRow : selectedRows) {
+            // Convert view index to model index (handles sorting/filtering)
+            int modelRow = table.convertRowIndexToModel(viewRow);
+            if (modelRow >= 0 && modelRow < findings.size()) {
+                IndagoFinding finding = findings.get(modelRow);
                 try {
                     com.indago.burp.import_.IndagoAuditIssue issue =
                             new com.indago.burp.import_.IndagoAuditIssue(finding, extension.getApi());
@@ -204,14 +206,23 @@ public class FindingsPanel extends JPanel {
 
     private void showSelectedFinding() {
         int selectedRow = table.getSelectedRow();
-        if (selectedRow < 0 || selectedRow >= findings.size()) {
+        if (selectedRow < 0) {
             detailsArea.setText("");
             requestArea.setText("");
             responseArea.setText("");
             return;
         }
 
-        IndagoFinding finding = findings.get(selectedRow);
+        // Convert view index to model index (handles sorting/filtering)
+        int modelRow = table.convertRowIndexToModel(selectedRow);
+        if (modelRow < 0 || modelRow >= findings.size()) {
+            detailsArea.setText("");
+            requestArea.setText("");
+            responseArea.setText("");
+            return;
+        }
+
+        IndagoFinding finding = findings.get(modelRow);
 
         // Build details text
         StringBuilder details = new StringBuilder();
@@ -339,7 +350,12 @@ public class FindingsPanel extends JPanel {
                                                        boolean isSelected, boolean hasFocus, int row, int column) {
             Component c = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
 
-            if (!isSelected && value != null) {
+            // Always reset to defaults first to handle cell reuse
+            if (isSelected) {
+                // Use default selection colors
+                c.setBackground(table.getSelectionBackground());
+                c.setForeground(table.getSelectionForeground());
+            } else if (value != null) {
                 String severity = value.toString().toLowerCase();
                 switch (severity) {
                     case "critical":
@@ -363,9 +379,13 @@ public class FindingsPanel extends JPanel {
                         c.setForeground(Color.BLACK);
                         break;
                     default:
-                        c.setBackground(Color.WHITE);
-                        c.setForeground(Color.BLACK);
+                        c.setBackground(table.getBackground());
+                        c.setForeground(table.getForeground());
                 }
+            } else {
+                // Reset to table defaults for null values
+                c.setBackground(table.getBackground());
+                c.setForeground(table.getForeground());
             }
 
             return c;

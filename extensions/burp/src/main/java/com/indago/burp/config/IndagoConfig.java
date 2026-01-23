@@ -3,6 +3,9 @@ package com.indago.burp.config;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 
+import java.net.MalformedURLException;
+import java.net.URL;
+
 /**
  * Configuration for the Indago extension.
  * Contains all settings needed to run Indago scans.
@@ -108,6 +111,49 @@ public class IndagoConfig {
 
     public void setLlmUrl(String llmUrl) {
         this.llmUrl = llmUrl;
+    }
+
+    /**
+     * Validate that the LLM URL is a valid URL with http/https protocol.
+     * Returns null if valid, or an error message if invalid.
+     */
+    public String validateLlmUrl() {
+        if (llmUrl == null || llmUrl.trim().isEmpty()) {
+            return null; // Empty URL is valid (not required)
+        }
+
+        try {
+            URL url = new URL(llmUrl);
+            String protocol = url.getProtocol().toLowerCase();
+            if (!protocol.equals("http") && !protocol.equals("https")) {
+                return "LLM URL must use http or https protocol";
+            }
+            if (url.getHost() == null || url.getHost().isEmpty()) {
+                return "LLM URL must have a valid host";
+            }
+            return null; // Valid
+        } catch (MalformedURLException e) {
+            return "Invalid LLM URL format: " + e.getMessage();
+        }
+    }
+
+    /**
+     * Validate that the Indago path doesn't contain dangerous characters.
+     * Returns null if valid, or an error message if invalid.
+     */
+    public String validateIndagoPath() {
+        if (indagoPath == null || indagoPath.trim().isEmpty()) {
+            return "Indago path is required";
+        }
+
+        // Check for command injection characters
+        if (indagoPath.contains(";") || indagoPath.contains("|") ||
+            indagoPath.contains("&") || indagoPath.contains("`") ||
+            indagoPath.contains("$") || indagoPath.contains("$(")) {
+            return "Indago path contains invalid characters";
+        }
+
+        return null; // Valid
     }
 
     public int getConcurrency() {
