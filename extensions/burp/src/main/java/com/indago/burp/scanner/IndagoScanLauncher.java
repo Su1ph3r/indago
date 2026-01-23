@@ -70,6 +70,9 @@ public class IndagoScanLauncher {
             // Build command
             List<String> command = buildCommand(tempInputFile, tempOutputFile);
 
+            // Log command with masked API key
+            logging.logToOutput("Starting scan: " + maskSensitiveArgs(command));
+
             // Start process
             boolean started = processManager.start(
                     command,
@@ -260,21 +263,37 @@ public class IndagoScanLauncher {
             return false;
         }
 
-        File indago = new File(config.getIndagoPath());
+        String indagoPath = config.getIndagoPath();
+
+        // Validate path doesn't contain suspicious characters
+        if (indagoPath.contains(";") || indagoPath.contains("|") || indagoPath.contains("&")) {
+            logging.logToError("Invalid Indago path: contains forbidden characters");
+            return false;
+        }
+
+        File indago = new File(indagoPath);
         if (!indago.exists()) {
-            logging.logToError("Indago binary not found: " + config.getIndagoPath());
+            logging.logToError("Indago binary not found: " + indagoPath);
             return false;
         }
 
         if (!indago.canExecute()) {
-            logging.logToError("Indago binary is not executable: " + config.getIndagoPath());
+            logging.logToError("Indago binary is not executable: " + indagoPath);
             return false;
         }
 
         // Try running indago --version
+        Process p = null;
         try {
-            ProcessBuilder pb = new ProcessBuilder(config.getIndagoPath(), "--version");
-            Process p = pb.start();
+            ProcessBuilder pb = new ProcessBuilder(indagoPath, "--version");
+            p = pb.start();
+
+            // Consume streams to prevent blocking
+            try (var stdout = p.getInputStream(); var stderr = p.getErrorStream()) {
+                stdout.readAllBytes();
+                stderr.readAllBytes();
+            }
+
             boolean completed = p.waitFor(5, TimeUnit.SECONDS);
             if (completed && p.exitValue() == 0) {
                 logging.logToOutput("Indago installation validated");
@@ -282,8 +301,35 @@ public class IndagoScanLauncher {
             }
         } catch (Exception e) {
             logging.logToError("Failed to validate Indago: " + e.getMessage());
+        } finally {
+            if (p != null) {
+                p.destroyForcibly();
+            }
         }
 
         return false;
+    }
+
+    /**
+     * Mask sensitive arguments (API keys) in command list for logging.
+     */
+    private String maskSensitiveArgs(List<String> command) {
+        StringBuilder sb = new StringBuilder();
+        boolean maskNext = false;
+        for (String arg : command) {
+            if (sb.length() > 0) {
+                sb.append(" ");
+            }
+            if (maskNext) {
+                sb.append("***");
+                maskNext = false;
+            } else if ("--api-key".equals(arg)) {
+                sb.append(arg);
+                maskNext = true;
+            } else {
+                sb.append(arg);
+            }
+        }
+        return sb.toString();
     }
 }

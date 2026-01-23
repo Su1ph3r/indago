@@ -81,7 +81,13 @@ public class ExportPanel extends JPanel {
             return;
         }
 
-        extension.removeFromExportQueue(selectedRows);
+        // Convert view indices to model indices (handles sorting/filtering)
+        int[] modelIndices = new int[selectedRows.length];
+        for (int i = 0; i < selectedRows.length; i++) {
+            modelIndices[i] = table.convertRowIndexToModel(selectedRows[i]);
+        }
+
+        extension.removeFromExportQueue(modelIndices);
     }
 
     private void clearAll() {

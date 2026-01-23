@@ -16,6 +16,7 @@ import java.util.function.Consumer;
 public class ProcessManager {
 
     private final Logging logging;
+    private final Object lock = new Object();
     private Process process;
     private Thread outputReader;
     private Thread errorReader;
@@ -34,7 +35,7 @@ public class ProcessManager {
      * @param errorHandler  Callback for stderr lines
      * @return true if the process started successfully
      */
-    public boolean start(List<String> command, File workingDir,
+    public synchronized boolean start(List<String> command, File workingDir,
                          Consumer<String> outputHandler, Consumer<String> errorHandler) {
         if (running) {
             logging.logToError("Process already running");
@@ -104,7 +105,7 @@ public class ProcessManager {
     /**
      * Stop the running process.
      */
-    public void stop() {
+    public synchronized void stop() {
         if (!running || process == null) {
             return;
         }

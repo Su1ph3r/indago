@@ -357,11 +357,40 @@ public class ConfigPanel extends JPanel {
     }
 
     private void saveConfig() {
-        config.setIndagoPath(indagoPathField.getText().trim());
+        // Create a temporary config to validate before applying
+        String indagoPath = indagoPathField.getText().trim();
+        String llmUrl = llmUrlField.getText().trim();
+
+        // Validate Indago path if set
+        if (!indagoPath.isEmpty()) {
+            config.setIndagoPath(indagoPath);
+            String pathError = config.validateIndagoPath();
+            if (pathError != null) {
+                JOptionPane.showMessageDialog(this,
+                        pathError,
+                        "Invalid Configuration",
+                        JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+        } else {
+            config.setIndagoPath(indagoPath);
+        }
+
+        // Validate LLM URL if set
+        config.setLlmUrl(llmUrl);
+        String urlError = config.validateLlmUrl();
+        if (urlError != null) {
+            JOptionPane.showMessageDialog(this,
+                    urlError,
+                    "Invalid Configuration",
+                    JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        // Apply remaining settings
         config.setLlmProvider((String) providerCombo.getSelectedItem());
         config.setLlmModel(modelField.getText().trim());
         config.setApiKey(new String(apiKeyField.getPassword()));
-        config.setLlmUrl(llmUrlField.getText().trim());
         config.setUseLlmPayloads(useLlmPayloadsCheck.isSelected());
         config.setLlmConcurrency((Integer) llmConcurrencySpinner.getValue());
         config.setConcurrency((Integer) concurrencySpinner.getValue());
