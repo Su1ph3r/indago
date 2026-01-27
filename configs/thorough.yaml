@@ -1,0 +1,112 @@
+# Indago Configuration: Thorough Security Audit
+# Comprehensive configuration for complete security assessments
+
+provider:
+  name: ""  # Recommended: openai or anthropic for best results
+  # api_key: ""
+  # model: ""
+  max_tokens: 4096
+  temperature: 0.1
+
+scan:
+  concurrency: 5          # Lower concurrency for thoroughness
+  rate_limit: 5.0         # Respectful rate limit
+  timeout: 60s            # Long timeout for complex responses
+  max_retries: 3
+  retry_delay: 2s
+  follow_redirects: true
+  max_redirects: 10
+  verify_ssl: true
+
+http:
+  user_agent: "Indago/1.0 (Security Scanner)"
+  # auth_header: "Bearer your-token"
+  # proxy_url: "http://localhost:8080"  # Route through Burp for analysis
+
+attacks:
+  # Enable all attack types
+  enabled: []             # Empty = all attacks enabled
+  disabled: []
+  max_payloads_per_type: 100
+  use_llm_payloads: true
+  llm_concurrency: 8
+
+  idor:
+    id_range: 50
+    test_uuids: true
+    swap_users: true
+
+  injection:
+    sqli: true
+    nosqli: true
+    command: true
+    ldap: true
+    xpath: true
+    ssti: true
+    blind_delay: 10
+
+filter:
+  enabled: true
+  min_confidence: 0.3     # Low threshold to catch more potential issues
+  min_severity: info      # Include info-level findings
+  dedupe_by_endpoint: true
+  filter_noise: true
+
+output:
+  format: html            # Rich HTML report
+  verbose: true
+  color: true
+  include_raw: true
+
+# Enable advanced features
+chains:
+  enabled: true
+  max_depth: 10
+
+state:
+  enabled: true
+  inject: true
+
+differential:
+  enabled: true
+  # Configure auth contexts for complete access control testing
+  # auth_contexts:
+  #   - name: anonymous
+  #     auth_type: ""
+  #     priority: 2
+  #   - name: user
+  #     auth_type: bearer
+  #     token: "user-token"
+  #     priority: 1
+  #   - name: admin
+  #     auth_type: bearer
+  #     token: "admin-token"
+  #     priority: 0
+
+graphql:
+  introspect: true
+  max_depth: 15
+  max_batch_size: 200
+  max_aliases: 100
+
+inference:
+  enabled: true
+  output_file: inferred-api-spec.yaml
+  min_confidence: 0.6
+
+callback:
+  enabled: false          # Enable for OOB testing
+  # external_url: "https://your-callback-server.com"
+  # http_port: 8888
+  # timeout: 60s
+
+waf:
+  detect: true
+  bypass: true
+  threshold: 3
+  max_retries: 5
+
+checkpoint:
+  enabled: true
+  interval: 30s
+  file: .indago-thorough-checkpoint.json

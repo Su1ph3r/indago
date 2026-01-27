@@ -1,0 +1,66 @@
+# Indago Configuration: IDOR/BOLA Focus
+# Optimized for testing authorization and access control vulnerabilities
+
+provider:
+  name: ""  # Set your provider: openai, anthropic, ollama, lmstudio
+  # api_key: ""  # Set via environment variable or here
+  # model: ""    # Optional: specify model
+
+scan:
+  concurrency: 5       # Lower concurrency for cleaner results
+  rate_limit: 5.0      # Requests per second
+  timeout: 30s
+  max_retries: 2
+  follow_redirects: true
+  verify_ssl: true
+
+http:
+  user_agent: "Indago/1.0 (Security Scanner)"
+  # auth_header: "Bearer your-token"  # Set your auth token
+
+attacks:
+  # Focus on authorization attacks
+  enabled:
+    - idor
+    - bola
+    - bfla
+    - data_exposure
+  disabled: []
+  max_payloads_per_type: 30
+  use_llm_payloads: false
+
+  idor:
+    id_range: 20        # Test IDs within +/- 20 of original
+    test_uuids: true    # Test UUID manipulation
+    swap_users: true    # Test user ID swapping
+
+filter:
+  enabled: true
+  min_confidence: 0.4
+  min_severity: low
+  dedupe_by_endpoint: true
+  filter_noise: true
+
+output:
+  format: json
+  verbose: false
+  color: true
+  include_raw: true
+
+# Differential analysis - useful for IDOR testing
+differential:
+  enabled: false  # Enable and configure auth contexts for multi-user testing
+  # auth_contexts:
+  #   - name: user_a
+  #     auth_type: bearer
+  #     token: "token-for-user-a"
+  #     user_id: "user-a-id"
+  #   - name: user_b
+  #     auth_type: bearer
+  #     token: "token-for-user-b"
+  #     user_id: "user-b-id"
+
+checkpoint:
+  enabled: true
+  interval: 30s
+  file: .indago-idor-checkpoint.json

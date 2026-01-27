@@ -1,0 +1,68 @@
+# Indago Configuration: Injection Focus
+# Optimized for testing injection vulnerabilities (SQL, NoSQL, Command, SSTI, etc.)
+
+provider:
+  name: ""  # Set your provider: openai, anthropic, ollama, lmstudio
+  # api_key: ""
+  # model: ""
+
+scan:
+  concurrency: 10
+  rate_limit: 15.0
+  timeout: 45s          # Longer timeout for time-based detection
+  max_retries: 3
+  follow_redirects: true
+  verify_ssl: true
+
+http:
+  user_agent: "Indago/1.0 (Security Scanner)"
+  # auth_header: "Bearer your-token"
+
+attacks:
+  # Focus on injection attacks
+  enabled:
+    - sqli
+    - nosqli
+    - command_injection
+    - ssti
+    - ldap_injection
+    - xpath_injection
+    - path_traversal
+  disabled: []
+  max_payloads_per_type: 50
+  use_llm_payloads: true   # LLM can generate context-aware injection payloads
+  llm_concurrency: 4
+
+  injection:
+    sqli: true
+    nosqli: true
+    command: true
+    ldap: true
+    xpath: true
+    ssti: true
+    blind_delay: 5  # Seconds for time-based blind injection detection
+
+filter:
+  enabled: true
+  min_confidence: 0.5
+  min_severity: medium  # Injection findings are usually at least medium
+  dedupe_by_endpoint: true
+  filter_noise: true
+
+output:
+  format: json
+  verbose: true
+  color: true
+  include_raw: true
+
+# WAF detection - useful when testing injection
+waf:
+  detect: true
+  bypass: false  # Set to true to attempt WAF bypass techniques
+  threshold: 3
+  max_retries: 2
+
+checkpoint:
+  enabled: true
+  interval: 30s
+  file: .indago-injection-checkpoint.json

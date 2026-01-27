@@ -18,17 +18,19 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/su1ph3r/indago/internal/analyzer"
+	"github.com/su1ph3r/indago/internal/credentials"
 	"github.com/su1ph3r/indago/internal/detector"
 	"github.com/su1ph3r/indago/internal/fuzzer"
 	"github.com/su1ph3r/indago/internal/llm"
 	"github.com/su1ph3r/indago/internal/parser"
 	"github.com/su1ph3r/indago/internal/payloads"
 	"github.com/su1ph3r/indago/internal/reporter"
+	"github.com/su1ph3r/indago/internal/tui"
 	"github.com/su1ph3r/indago/pkg/types"
 )
 
 var (
-	version = "1.0.3"
+	version = "1.1.0"
 	cfgFile string
 	config  *types.Config
 )
@@ -96,6 +98,118 @@ var configShowCmd = &cobra.Command{
 	},
 }
 
+// Credentials commands
+var credentialsCmd = &cobra.Command{
+	Use:   "credentials",
+	Short: "Manage stored credentials",
+	Long:  `Store and retrieve API keys and tokens securely using platform keychain or encrypted file storage`,
+}
+
+var credentialsSetCmd = &cobra.Command{
+	Use:   "set [key] [value]",
+	Short: "Store a credential",
+	Long: `Store a credential securely. Common keys:
+  - openai_api_key     OpenAI API key
+  - anthropic_api_key  Anthropic API key
+  - ollama_url         Ollama server URL
+  - lmstudio_url       LM Studio server URL`,
+	Args: cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		mgr, err := credentials.NewManager()
+		if err != nil {
+			return fmt.Errorf("failed to initialize credential store: %w", err)
+		}
+
+		key := "indago." + args[0]
+		if err := mgr.Set(key, args[1]); err != nil {
+			return fmt.Errorf("failed to store credential: %w", err)
+		}
+
+		printSuccess("Credential '%s' stored in %s", args[0], mgr.StoreName())
+		return nil
+	},
+}
+
+var credentialsGetCmd = &cobra.Command{
+	Use:   "get [key]",
+	Short: "Retrieve a credential",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		mgr, err := credentials.NewManager()
+		if err != nil {
+			return fmt.Errorf("failed to initialize credential store: %w", err)
+		}
+
+		key := "indago." + args[0]
+		value, err := mgr.Get(key)
+		if err != nil {
+			return fmt.Errorf("credential not found: %s", args[0])
+		}
+
+		fmt.Println(value)
+		return nil
+	},
+}
+
+var credentialsListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all stored credentials",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		mgr, err := credentials.NewManager()
+		if err != nil {
+			return fmt.Errorf("failed to initialize credential store: %w", err)
+		}
+
+		keys, err := mgr.List()
+		if err != nil {
+			return fmt.Errorf("failed to list credentials: %w", err)
+		}
+
+		if len(keys) == 0 {
+			fmt.Println("No credentials stored")
+			return nil
+		}
+
+		fmt.Printf("Stored credentials (%s):\n", mgr.StoreName())
+		for _, k := range keys {
+			// Strip "indago." prefix for display
+			displayKey := strings.TrimPrefix(k, "indago.")
+			fmt.Printf("  - %s\n", displayKey)
+		}
+		return nil
+	},
+}
+
+var credentialsDeleteCmd = &cobra.Command{
+	Use:   "delete [key]",
+	Short: "Delete a credential",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		mgr, err := credentials.NewManager()
+		if err != nil {
+			return fmt.Errorf("failed to initialize credential store: %w", err)
+		}
+
+		key := "indago." + args[0]
+		if err := mgr.Delete(key); err != nil {
+			return fmt.Errorf("failed to delete credential: %w", err)
+		}
+
+		printSuccess("Credential '%s' deleted", args[0])
+		return nil
+	},
+}
+
+// Interactive command
+var interactiveCmd = &cobra.Command{
+	Use:   "interactive",
+	Short: "Run in interactive TUI mode",
+	Long:  `Launch Indago in interactive terminal UI mode with real-time progress, findings list, and triage capabilities`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return tui.RunInteractive()
+	},
+}
+
 func init() {
 	cobra.OnInitialize(initConfig)
 
@@ -134,12 +248,32 @@ func init() {
 	scanCmd.Flags().Bool("use-llm-payloads", false, "Generate additional context-aware payloads using LLM")
 	scanCmd.Flags().Int("llm-concurrency", 8, "Number of concurrent LLM calls for payload generation")
 
+	// New flags for Phase 1.2
+	scanCmd.Flags().Bool("dry-run", false, "Show what would be tested without making requests")
+	scanCmd.Flags().String("log-requests", "", "Log all requests/responses to file (JSON format)")
+	scanCmd.Flags().Bool("validate-config", false, "Validate configuration and exit")
+
+	// Phase 3 flags
+	scanCmd.Flags().Bool("verify", false, "Verify findings with additional testing")
+	scanCmd.Flags().String("resume", "", "Resume from checkpoint file")
+	scanCmd.Flags().String("checkpoint", "", "Checkpoint file path")
+	scanCmd.Flags().Duration("checkpoint-interval", 30*time.Second, "Checkpoint save interval")
+
+	// Phase 4 flags
+	scanCmd.Flags().Bool("interactive", false, "Run in interactive TUI mode")
+
 	// Add commands
 	rootCmd.AddCommand(scanCmd)
 	rootCmd.AddCommand(configCmd)
+	rootCmd.AddCommand(interactiveCmd)
+	rootCmd.AddCommand(credentialsCmd)
 	configCmd.AddCommand(configSetCmd)
 	configCmd.AddCommand(configGetCmd)
 	configCmd.AddCommand(configShowCmd)
+	credentialsCmd.AddCommand(credentialsSetCmd)
+	credentialsCmd.AddCommand(credentialsGetCmd)
+	credentialsCmd.AddCommand(credentialsListCmd)
+	credentialsCmd.AddCommand(credentialsDeleteCmd)
 }
 
 func initConfig() {
@@ -181,9 +315,32 @@ func runScan(cmd *cobra.Command, args []string) error {
 		cancel()
 	}()
 
+	// Check for validate-config flag
+	validateOnly, _ := cmd.Flags().GetBool("validate-config")
+	if validateOnly {
+		if err := types.ValidateConfig(config); err != nil {
+			printError("Configuration validation failed:")
+			fmt.Println(err)
+			return err
+		}
+		printSuccess("Configuration is valid")
+		return nil
+	}
+
+	// Check for interactive mode
+	interactiveMode, _ := cmd.Flags().GetBool("interactive")
+	if interactiveMode {
+		return tui.RunInteractive()
+	}
+
 	// Determine input file
 	inputFile, inputType, err := getInputFile(cmd)
 	if err != nil {
+		return err
+	}
+
+	// Validate input file exists
+	if err := types.ValidateInputFile(inputFile); err != nil {
 		return err
 	}
 
@@ -265,9 +422,30 @@ func runScan(cmd *cobra.Command, args []string) error {
 	}
 	printInfo("Generated %d fuzz requests", len(fuzzRequests))
 
+	// Check for dry-run mode
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	if dryRun {
+		return runDryRun(fuzzRequests)
+	}
+
+	// Setup request logger if enabled
+	logFile, _ := cmd.Flags().GetString("log-requests")
+	requestLogger, err := fuzzer.NewRequestLogger(logFile)
+	if err != nil {
+		return fmt.Errorf("failed to create request logger: %w", err)
+	}
+	defer requestLogger.Close()
+
+	if logFile != "" {
+		printInfo("Logging requests to: %s", logFile)
+	}
+
 	// Setup fuzzer
 	engine := fuzzer.NewEngine(*config)
 	responseAnalyzer := detector.NewAnalyzer()
+
+	// Initialize scan stats
+	scanStats := types.NewScanStats()
 
 	// Run fuzzing
 	printInfo("Starting scan...")
@@ -280,6 +458,18 @@ func runScan(cmd *cobra.Command, args []string) error {
 	processedCount := 0
 	for result := range results {
 		processedCount++
+
+		// Log request if logger is enabled
+		if err := requestLogger.Log(result); err != nil {
+			printWarning("Failed to log request: %v", err)
+		}
+
+		// Update stats
+		respSize := int64(0)
+		if result.Response != nil {
+			respSize = result.Response.ContentLength
+		}
+		scanStats.Update(result.Duration, result.Error == nil, respSize)
 
 		// Get baseline if needed
 		var baseline *types.HTTPResponse
@@ -305,6 +495,9 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 	endTime := time.Now()
 
+	// Finalize stats
+	scanStats.Finalize(endTime.Sub(startTime))
+
 	// Build scan result
 	scanResult := &types.ScanResult{
 		ScanID:    uuid.New().String(),
@@ -314,6 +507,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 		Duration:  endTime.Sub(startTime),
 		Findings:  findings,
 		Summary:   types.NewScanSummary(findings),
+		Stats:     scanStats,
 		Endpoints: len(endpoints),
 		Requests:  processedCount,
 		Config: &types.ScanConfig{
@@ -635,6 +829,50 @@ func printSummary(result *types.ScanResult) {
 	}
 
 	fmt.Println("=" + strings.Repeat("=", 50))
+}
+
+func runDryRun(requests []payloads.FuzzRequest) error {
+	simulator := fuzzer.NewDryRunSimulator()
+	results := simulator.Simulate(requests)
+	summary := simulator.GetSummary(results)
+
+	fmt.Println()
+	fmt.Println("=" + strings.Repeat("=", 50))
+	fmt.Println("DRY RUN SUMMARY")
+	fmt.Println("=" + strings.Repeat("=", 50))
+	fmt.Printf("Total Requests:     %d\n", summary.TotalRequests)
+	fmt.Printf("Unique Endpoints:   %d\n", summary.UniqueEndpoints)
+	fmt.Println()
+
+	// Print by attack type
+	fmt.Println("By Attack Type:")
+	for attackType, count := range summary.ByAttackType {
+		fmt.Printf("  %-20s %d\n", attackType, count)
+	}
+	fmt.Println()
+
+	// Print by endpoint
+	fmt.Println("By Endpoint:")
+	grouped := simulator.GroupByEndpoint(results)
+	for endpoint, endpointResults := range grouped {
+		fmt.Printf("  %s (%d payloads)\n", endpoint, len(endpointResults))
+
+		// Show attack types for this endpoint
+		attackCounts := make(map[string]int)
+		for _, r := range endpointResults {
+			attackCounts[r.PayloadType]++
+		}
+		for attack, count := range attackCounts {
+			fmt.Printf("    - %s: %d\n", attack, count)
+		}
+	}
+
+	fmt.Println()
+	fmt.Println("=" + strings.Repeat("=", 50))
+	printSuccess("Dry run complete. No requests were sent.")
+	fmt.Println()
+
+	return nil
 }
 
 func getConfigDir() string {
