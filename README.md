@@ -21,6 +21,9 @@ AI-Powered API Security Fuzzer that uses LLMs to understand API business context
 - **Multiple Output Formats**: JSON, HTML, Markdown, SARIF, Text (Nmap-style), Burp Suite XML
 - **Reproducible Findings**: Every finding includes curl commands for easy reproduction
 - **Concurrent Scanning**: Worker pool with rate limiting and session management
+- **Interactive TUI Mode**: Real-time progress, findings list, and interactive triage with keyboard navigation
+- **Scan Checkpointing**: Resume interrupted scans from where they left off
+- **Credential Management**: Secure credential storage using platform keychain or encrypted files
 
 ### Advanced Features
 - **GraphQL Support**: Introspection-based scanning, depth attacks, batch attacks, alias attacks
@@ -106,11 +109,47 @@ indago scan --spec api.yaml -f burp -o findings.xml
 
 # Use with proxy (e.g., Burp Suite)
 indago scan --spec api.yaml --proxy http://127.0.0.1:8080
+
+# Dry run - see what would be tested without making requests
+indago scan --spec api.yaml --dry-run
+
+# Log all requests and responses to file
+indago scan --spec api.yaml --log-requests requests.log
+
+# Interactive TUI mode
+indago scan --spec api.yaml --interactive
+
+# Resume an interrupted scan from checkpoint
+indago scan --spec api.yaml --resume .indago-checkpoint.json
+
+# Enable checkpointing for long scans
+indago scan --spec api.yaml --checkpoint .indago-checkpoint.json --checkpoint-interval 30s
+
+# Verify findings with additional testing
+indago scan --spec api.yaml --verify
 ```
 
 ## Configuration
 
-Create `~/.indago.yaml` or use `--config` flag:
+Create `~/.indago.yaml` or use `--config` flag.
+
+### Pre-built Configuration Profiles
+
+Indago includes several pre-built configuration profiles in the `configs/` directory:
+
+| Profile | Description |
+|---------|-------------|
+| `configs/idor-focus.yaml` | Optimized for IDOR/BOLA testing with differential analysis |
+| `configs/injection-focus.yaml` | Focused on injection attacks (SQL, NoSQL, Command, SSTI) |
+| `configs/ci-quick.yaml` | Fast, lightweight scans for CI/CD pipelines (SARIF output) |
+| `configs/thorough.yaml` | Comprehensive security audit with all features enabled |
+
+Use a profile with:
+```bash
+indago scan --spec api.yaml --config configs/thorough.yaml
+```
+
+### Basic Configuration
 
 ```yaml
 provider:
@@ -253,6 +292,16 @@ Scan Flags:
 Attack Flags:
       --attacks strings       Attack types to enable
       --skip-attacks strings  Attack types to skip
+
+Advanced Flags:
+      --dry-run                    Show what would be tested without requests
+      --log-requests string        Log all requests/responses to file
+      --verify                     Verify findings with additional testing
+      --resume string              Resume from checkpoint file
+      --checkpoint string          Checkpoint file path for saving progress
+      --checkpoint-interval dur    Checkpoint save interval (default 30s)
+      --interactive                Run in interactive TUI mode
+      --validate-config            Validate configuration and exit
 ```
 
 ### Config Command
@@ -266,6 +315,38 @@ indago config get provider.name
 
 # Show all configuration
 indago config show
+```
+
+### Credentials Command
+
+Securely store and manage API keys using platform keychain (macOS/Linux) or encrypted file storage.
+
+```bash
+# Store an API key
+indago credentials set openai_api_key sk-xxxx
+
+# Retrieve an API key
+indago credentials get openai_api_key
+
+# List all stored credentials
+indago credentials list
+
+# Delete a credential
+indago credentials delete openai_api_key
+```
+
+Available credential keys:
+- `openai_api_key` - OpenAI API key
+- `anthropic_api_key` - Anthropic API key
+- `ollama_url` - Ollama server URL
+- `lmstudio_url` - LM Studio server URL
+
+### Interactive Command
+
+Launch the interactive TUI mode directly:
+
+```bash
+indago interactive
 ```
 
 ## Attack Types

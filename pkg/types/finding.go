@@ -78,6 +78,7 @@ type ScanResult struct {
 	Duration    time.Duration `json:"duration" yaml:"duration"`
 	Findings    []Finding     `json:"findings" yaml:"findings"`
 	Summary     *ScanSummary  `json:"summary" yaml:"summary"`
+	Stats       *ScanStats    `json:"stats,omitempty" yaml:"stats,omitempty"`
 	Endpoints   int           `json:"endpoints_scanned" yaml:"endpoints_scanned"`
 	Requests    int           `json:"requests_made" yaml:"requests_made"`
 	Errors      []ScanError   `json:"errors,omitempty" yaml:"errors,omitempty"`
@@ -116,6 +117,65 @@ type ScanConfig struct {
 	RateLimit    float64  `json:"rate_limit" yaml:"rate_limit"`
 	Timeout      int      `json:"timeout" yaml:"timeout"`
 	ProxyURL     string   `json:"proxy_url,omitempty" yaml:"proxy_url,omitempty"`
+}
+
+// ScanStats provides timing and performance metrics for a scan
+type ScanStats struct {
+	TotalRequests     int           `json:"total_requests" yaml:"total_requests"`
+	SuccessfulReqs    int           `json:"successful_requests" yaml:"successful_requests"`
+	FailedReqs        int           `json:"failed_requests" yaml:"failed_requests"`
+	TotalDuration     time.Duration `json:"total_duration" yaml:"total_duration"`
+	AvgResponseTime   time.Duration `json:"avg_response_time" yaml:"avg_response_time"`
+	MinResponseTime   time.Duration `json:"min_response_time" yaml:"min_response_time"`
+	MaxResponseTime   time.Duration `json:"max_response_time" yaml:"max_response_time"`
+	RequestsPerSecond float64       `json:"requests_per_second" yaml:"requests_per_second"`
+	BytesSent         int64         `json:"bytes_sent" yaml:"bytes_sent"`
+	BytesReceived     int64         `json:"bytes_received" yaml:"bytes_received"`
+}
+
+// NewScanStats creates a new ScanStats with default values
+func NewScanStats() *ScanStats {
+	return &ScanStats{
+		MinResponseTime: time.Hour, // Initialize to large value
+	}
+}
+
+// Update updates stats with a new request result
+func (s *ScanStats) Update(duration time.Duration, success bool, respSize int64) {
+	s.TotalRequests++
+	if success {
+		s.SuccessfulReqs++
+	} else {
+		s.FailedReqs++
+	}
+
+	s.BytesReceived += respSize
+
+	if duration < s.MinResponseTime {
+		s.MinResponseTime = duration
+	}
+	if duration > s.MaxResponseTime {
+		s.MaxResponseTime = duration
+	}
+}
+
+// Finalize calculates final statistics
+func (s *ScanStats) Finalize(totalDuration time.Duration) {
+	s.TotalDuration = totalDuration
+
+	if totalDuration.Seconds() > 0 {
+		s.RequestsPerSecond = float64(s.TotalRequests) / totalDuration.Seconds()
+	}
+
+	if s.SuccessfulReqs > 0 {
+		// Calculate average response time (simplified)
+		s.AvgResponseTime = totalDuration / time.Duration(s.SuccessfulReqs)
+	}
+
+	// Reset min if no requests were made
+	if s.TotalRequests == 0 {
+		s.MinResponseTime = 0
+	}
 }
 
 // NewScanSummary creates a summary from findings

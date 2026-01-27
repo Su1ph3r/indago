@@ -18,6 +18,9 @@ type Config struct {
 	// Output settings
 	Output OutputSettings `yaml:"output" mapstructure:"output"`
 
+	// Filter settings for false positive reduction
+	Filter FilterSettings `yaml:"filter" mapstructure:"filter"`
+
 	// Attack settings
 	Attacks AttackSettings `yaml:"attacks" mapstructure:"attacks"`
 
@@ -44,6 +47,12 @@ type Config struct {
 
 	// WAF detection settings
 	WAF WAFSettings `yaml:"waf" mapstructure:"waf"`
+
+	// Plugin settings
+	Plugins PluginSettings `yaml:"plugins" mapstructure:"plugins"`
+
+	// Checkpoint settings
+	Checkpoint CheckpointSettings `yaml:"checkpoint" mapstructure:"checkpoint"`
 }
 
 // ProviderConfig holds LLM provider configuration
@@ -191,6 +200,29 @@ type WAFSettings struct {
 	MaxRetries int  `yaml:"max_retries" mapstructure:"max_retries"` // Max bypass attempts per payload
 }
 
+// FilterSettings holds finding filter configuration
+type FilterSettings struct {
+	Enabled          bool    `yaml:"enabled" mapstructure:"enabled"`                       // Enable filtering
+	MinConfidence    float64 `yaml:"min_confidence" mapstructure:"min_confidence"`         // Minimum confidence score (0.0-1.0)
+	MinSeverity      string  `yaml:"min_severity" mapstructure:"min_severity"`             // Minimum severity level
+	DedupeByEndpoint bool    `yaml:"dedupe_by_endpoint" mapstructure:"dedupe_by_endpoint"` // Deduplicate findings by endpoint
+	FilterNoise      bool    `yaml:"filter_noise" mapstructure:"filter_noise"`             // Filter common false positives
+}
+
+// PluginSettings holds plugin configuration
+type PluginSettings struct {
+	Enabled      bool     `yaml:"enabled" mapstructure:"enabled"`             // Enable plugins
+	PayloadFiles []string `yaml:"payload_files" mapstructure:"payload_files"` // Custom payload files
+	MatcherFiles []string `yaml:"matcher_files" mapstructure:"matcher_files"` // Custom matcher files
+}
+
+// CheckpointSettings holds checkpoint configuration
+type CheckpointSettings struct {
+	Enabled  bool          `yaml:"enabled" mapstructure:"enabled"`   // Enable checkpointing
+	Interval time.Duration `yaml:"interval" mapstructure:"interval"` // Save interval
+	File     string        `yaml:"file" mapstructure:"file"`         // Checkpoint file path
+}
+
 // DefaultConfig returns a configuration with sensible defaults
 func DefaultConfig() *Config {
 	return &Config{
@@ -220,6 +252,13 @@ func DefaultConfig() *Config {
 			Verbose:    false,
 			Color:      true,
 			IncludeRaw: true,
+		},
+		Filter: FilterSettings{
+			Enabled:          true,
+			MinConfidence:    0.3,
+			MinSeverity:      SeverityInfo,
+			DedupeByEndpoint: true,
+			FilterNoise:      true,
 		},
 		Attacks: AttackSettings{
 			Enabled:            []string{},
@@ -279,6 +318,16 @@ func DefaultConfig() *Config {
 			Bypass:     false,
 			Threshold:  5,
 			MaxRetries: 3,
+		},
+		Plugins: PluginSettings{
+			Enabled:      false,
+			PayloadFiles: []string{},
+			MatcherFiles: []string{},
+		},
+		Checkpoint: CheckpointSettings{
+			Enabled:  true,
+			Interval: 30 * time.Second,
+			File:     ".indago-checkpoint.json",
 		},
 	}
 }

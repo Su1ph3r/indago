@@ -1,0 +1,63 @@
+# Indago Configuration: CI/CD Quick Scan
+# Fast, lightweight configuration for continuous integration pipelines
+
+provider:
+  name: ""  # Optional - can run without AI analysis
+  # api_key: ""
+
+scan:
+  concurrency: 20       # Higher concurrency for speed
+  rate_limit: 50.0      # Fast rate limit
+  timeout: 10s          # Short timeout
+  max_retries: 1        # Minimal retries
+  follow_redirects: true
+  verify_ssl: false     # Often needed in CI environments
+
+http:
+  user_agent: "Indago/1.0 (CI Scanner)"
+
+attacks:
+  # Limited attack set for quick scanning
+  enabled:
+    - sqli
+    - xss
+    - idor
+    - auth_bypass
+  disabled:
+    - rate_limit         # Skip rate limit testing in CI
+    - data_exposure      # Skip verbose data exposure checks
+  max_payloads_per_type: 10  # Limit payloads for speed
+  use_llm_payloads: false    # Disable LLM for speed
+
+filter:
+  enabled: true
+  min_confidence: 0.6    # Higher threshold for fewer false positives
+  min_severity: medium   # Only medium+ severity in CI
+  dedupe_by_endpoint: true
+  filter_noise: true
+
+output:
+  format: sarif          # SARIF for GitHub Code Scanning integration
+  verbose: false
+  color: false           # No color in CI logs
+  include_raw: false     # Reduce output size
+
+checkpoint:
+  enabled: false         # Disable checkpointing in CI
+
+# Disable advanced features for speed
+chains:
+  enabled: false
+
+differential:
+  enabled: false
+
+inference:
+  enabled: false
+
+callback:
+  enabled: false
+
+waf:
+  detect: false
+  bypass: false

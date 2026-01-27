@@ -1,0 +1,200 @@
+openapi: "3.0.0"
+info:
+  title: Test Pet Store API
+  version: "1.0.0"
+  description: A sample API for testing Indago
+servers:
+  - url: https://api.example.com/v1
+
+paths:
+  /pets:
+    get:
+      operationId: listPets
+      summary: List all pets
+      tags:
+        - pets
+      parameters:
+        - name: limit
+          in: query
+          description: How many items to return at one time
+          required: false
+          schema:
+            type: integer
+            format: int32
+            example: 10
+        - name: search
+          in: query
+          description: Search term for filtering pets
+          schema:
+            type: string
+            example: "fluffy"
+      responses:
+        '200':
+          description: A list of pets
+
+    post:
+      operationId: createPet
+      summary: Create a pet
+      tags:
+        - pets
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              properties:
+                name:
+                  type: string
+                  example: "Fluffy"
+                tag:
+                  type: string
+                  example: "dog"
+                owner_id:
+                  type: integer
+                  example: 123
+                is_admin:
+                  type: boolean
+                  description: Admin flag (should not be settable)
+      responses:
+        '201':
+          description: Pet created
+
+  /pets/{petId}:
+    get:
+      operationId: getPet
+      summary: Get a specific pet
+      tags:
+        - pets
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          description: The id of the pet to retrieve
+          schema:
+            type: integer
+            format: int64
+            example: 123
+      responses:
+        '200':
+          description: Expected response to a valid request
+
+    delete:
+      operationId: deletePet
+      summary: Delete a pet
+      tags:
+        - pets
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Pet deleted
+
+  /users/{userId}/profile:
+    get:
+      operationId: getUserProfile
+      summary: Get user profile
+      description: Retrieves the profile for a specific user. Contains sensitive personal information.
+      tags:
+        - users
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+            example: "550e8400-e29b-41d4-a716-446655440000"
+      responses:
+        '200':
+          description: User profile
+
+  /admin/users:
+    get:
+      operationId: listUsers
+      summary: List all users (admin only)
+      tags:
+        - admin
+      parameters:
+        - name: role
+          in: query
+          schema:
+            type: string
+            enum:
+              - admin
+              - user
+              - guest
+      responses:
+        '200':
+          description: List of users
+
+  /search:
+    get:
+      operationId: search
+      summary: Search across all resources
+      tags:
+        - search
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Search query
+          schema:
+            type: string
+            example: "test query"
+        - name: filter
+          in: query
+          description: Filter expression
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Search results
+
+  /files/{filename}:
+    get:
+      operationId: getFile
+      summary: Download a file
+      tags:
+        - files
+      parameters:
+        - name: filename
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "report.pdf"
+      responses:
+        '200':
+          description: File contents
+
+  /webhook:
+    post:
+      operationId: registerWebhook
+      summary: Register a webhook URL
+      tags:
+        - webhooks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url:
+                  type: string
+                  format: uri
+                  example: "https://example.com/callback"
+                events:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '201':
+          description: Webhook registered
