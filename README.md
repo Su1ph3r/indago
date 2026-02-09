@@ -492,6 +492,52 @@ indago scan --spec api.yaml -f json | jq '.findings[0].curl_command'
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+## Cross-Tool Integration
+
+Indago participates in a cross-tool security pipeline:
+
+```
+Nubicustos (cloud) ──containers──> Cepheus (container escape)
+Reticustos (network) ──endpoints──> Indago (API fuzzing)
+Indago (API fuzzing) ──WAF-blocked──> BypassBurrito (WAF bypass)
+Ariadne (attack paths) ──endpoints──> Indago (API fuzzing)
+All tools ──findings──> Vinculum (correlation) ──export──> Ariadne (attack paths)
+```
+
+### Importing Targets
+
+Import endpoints from Reticustos or Ariadne for targeted API fuzzing:
+
+```bash
+# From Reticustos
+curl -o endpoints.json "http://localhost:8000/api/exports/endpoints?scan_id=SCAN_ID"
+indago scan --targets-from endpoints.json --provider anthropic
+
+# From Ariadne
+ariadne export-endpoints --session SESSION_ID -o endpoints.json
+indago scan --targets-from endpoints.json --provider anthropic
+```
+
+### Exporting WAF-Blocked Findings
+
+Export WAF-blocked findings for BypassBurrito bypass testing:
+
+```bash
+indago scan --spec api.yaml --export-waf-blocked waf-blocked.json
+burrito bypass --from-indago waf-blocked.json
+```
+
+### Exporting to Vinculum
+
+Export scan results for correlation in Vinculum:
+
+```bash
+indago scan --spec api.yaml -f json -o results.json
+vinculum ingest results.json --format ariadne --output correlated.json
+```
+
+See also: [Vinculum](https://github.com/Su1ph3r/vinculum) | [Nubicustos](https://github.com/Su1ph3r/Nubicustos) | [Reticustos](https://github.com/Su1ph3r/Reticustos) | [BypassBurrito](https://github.com/Su1ph3r/bypassburrito) | [Cepheus](https://github.com/Su1ph3r/Cepheus) | [Ariadne](https://github.com/Su1ph3r/ariadne)
+
 ## License
 
 MIT License - See LICENSE file for details.

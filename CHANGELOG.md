@@ -5,6 +5,17 @@ All notable changes to Indago will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-02-09
+
+### Added
+
+#### Cross-Tool Integration
+- `--targets-from` flag for importing endpoints from Reticustos or Ariadne JSON exports
+- `--export-waf-blocked` flag for exporting WAF-blocked findings in BypassBurrito-compatible format
+- Export source validation for imported endpoint files
+- Placeholder hostname warning for incomplete endpoint data
+- WAF export file permissions set to 0600 for security
+
 ## [1.1.0] - 2026-01-26
 
 ### Added
@@ -160,6 +171,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Session management and authentication support
 - Proxy support for debugging
 
+[1.2.0]: https://github.com/Su1ph3r/indago/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Su1ph3r/indago/compare/v1.0.3...v1.1.0
 [1.0.3]: https://github.com/Su1ph3r/indago/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/Su1ph3r/indago/compare/v1.0.1...v1.0.2
