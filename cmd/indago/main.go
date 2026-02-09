@@ -21,6 +21,7 @@ import (
 	"github.com/su1ph3r/indago/internal/credentials"
 	"github.com/su1ph3r/indago/internal/detector"
 	"github.com/su1ph3r/indago/internal/fuzzer"
+	"github.com/su1ph3r/indago/internal/importer"
 	"github.com/su1ph3r/indago/internal/llm"
 	"github.com/su1ph3r/indago/internal/parser"
 	"github.com/su1ph3r/indago/internal/payloads"
@@ -262,6 +263,10 @@ func init() {
 	// Phase 4 flags
 	scanCmd.Flags().Bool("interactive", false, "Run in interactive TUI mode")
 
+	// Cross-tool integration flags (Phase 4)
+	scanCmd.Flags().String("targets-from", "", "Import targets from external tool export (Reticustos/Ariadne JSON)")
+	scanCmd.Flags().String("export-waf-blocked", "", "Export WAF-blocked findings to file for BypassBurrito")
+
 	// Add commands
 	rootCmd.AddCommand(scanCmd)
 	rootCmd.AddCommand(configCmd)
@@ -335,23 +340,51 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 	// Determine input file
 	inputFile, inputType, err := getInputFile(cmd)
-	if err != nil {
+	targetsFrom, _ := cmd.Flags().GetString("targets-from")
+
+	// If --targets-from is set, input file is optional
+	if err != nil && targetsFrom == "" {
 		return err
 	}
 
-	// Validate input file exists
-	if err := types.ValidateInputFile(inputFile); err != nil {
-		return err
+	// Validate input file exists (only if we have one)
+	if inputFile != "" {
+		if err := types.ValidateInputFile(inputFile); err != nil {
+			return err
+		}
 	}
 
 	printBanner()
-	printInfo("Input: %s (%s)", inputFile, inputType)
 
-	// Parse endpoints
-	endpoints, err := parseEndpoints(cmd, inputFile)
-	if err != nil {
-		return fmt.Errorf("failed to parse input: %w", err)
+	var endpoints []types.Endpoint
+
+	// Import targets from external tool if specified
+	if targetsFrom != "" {
+		imp, err := importer.LoadTargets(targetsFrom)
+		if err != nil {
+			return fmt.Errorf("failed to load targets: %w", err)
+		}
+		importedEndpoints := importer.ToEndpoints(imp)
+		printInfo("Imported %d endpoints from %s", len(importedEndpoints), imp.ExportSource)
+
+		if inputFile != "" {
+			printInfo("Input: %s (%s)", inputFile, inputType)
+			parsed, err := parseEndpoints(cmd, inputFile)
+			if err != nil {
+				return fmt.Errorf("failed to parse input: %w", err)
+			}
+			endpoints = append(parsed, importedEndpoints...)
+		} else {
+			endpoints = importedEndpoints
+		}
+	} else {
+		printInfo("Input: %s (%s)", inputFile, inputType)
+		endpoints, err = parseEndpoints(cmd, inputFile)
+		if err != nil {
+			return fmt.Errorf("failed to parse input: %w", err)
+		}
 	}
+
 	printInfo("Parsed %d endpoints", len(endpoints))
 
 	// Setup LLM provider if configured
@@ -522,6 +555,16 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 	// Print summary
 	printSummary(scanResult)
+
+	// Export WAF-blocked findings if requested
+	wafBlockedFile, _ := cmd.Flags().GetString("export-waf-blocked")
+	if wafBlockedFile != "" {
+		if err := reporter.ExportWAFBlocked(scanResult, wafBlockedFile); err != nil {
+			printWarning("Failed to export WAF-blocked findings: %v", err)
+		} else {
+			printInfo("WAF-blocked findings exported to: %s", wafBlockedFile)
+		}
+	}
 
 	// Generate report
 	outputFile, _ := cmd.Flags().GetString("output")
