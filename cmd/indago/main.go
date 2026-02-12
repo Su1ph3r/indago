@@ -248,6 +248,7 @@ func init() {
 	scanCmd.Flags().StringSlice("skip-attacks", []string{}, "Attack types to skip")
 	scanCmd.Flags().Bool("use-llm-payloads", false, "Generate additional context-aware payloads using LLM")
 	scanCmd.Flags().Int("llm-concurrency", 8, "Number of concurrent LLM calls for payload generation")
+	scanCmd.Flags().String("context", "", "User-provided context about the API (e.g., 'ServiceNow integration for user management')")
 
 	// New flags for Phase 1.2
 	scanCmd.Flags().Bool("dry-run", false, "Show what would be tested without making requests")
@@ -403,7 +404,15 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 			// Enrich endpoints with AI analysis
 			printInfo("Analyzing API with AI...")
-			businessAnalyzer := analyzer.NewBusinessAnalyzer(provider)
+			userContext, _ := cmd.Flags().GetString("context")
+			if userContext == "" {
+				userContext = viper.GetString("user_context")
+			}
+			if userContext != "" {
+				config.UserContext = userContext
+				printInfo("Using user-provided context for AI analysis")
+			}
+			businessAnalyzer := analyzer.NewBusinessAnalyzer(provider, config.UserContext)
 			enrichedEndpoints, err := businessAnalyzer.EnrichEndpoints(ctx, endpoints)
 			if err != nil {
 				printWarning("AI analysis failed: %v (continuing with static analysis)", err)
@@ -422,7 +431,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 	if config.Attacks.UseLLMPayloads && provider != nil {
 		printInfo("Dynamic LLM payload generation enabled (concurrency: %d)", config.Attacks.LLMConcurrency)
 	}
-	payloadGen := payloads.NewGenerator(provider, config.Attacks)
+	payloadGen := payloads.NewGenerator(provider, config.Attacks, config.UserContext)
 	var fuzzRequests []payloads.FuzzRequest
 
 	// Use parallel processing for payload generation

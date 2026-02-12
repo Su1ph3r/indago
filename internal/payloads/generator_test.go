@@ -14,7 +14,7 @@ func TestNewGenerator(t *testing.T) {
 		Injection: types.InjectionSettings{SQLi: true},
 	}
 
-	g := NewGenerator(nil, config)
+	g := NewGenerator(nil, config, "")
 
 	if g == nil {
 		t.Fatal("NewGenerator returned nil")
@@ -43,7 +43,7 @@ func TestGenerator_GenerateForEndpoint(t *testing.T) {
 		MaxPayloadsPerType: 100,
 	}
 
-	g := NewGenerator(nil, config)
+	g := NewGenerator(nil, config, "")
 
 	endpoint := types.Endpoint{
 		Method:  "GET",
@@ -98,7 +98,7 @@ func TestGenerator_GenerateForEndpointWithBody(t *testing.T) {
 		MaxPayloadsPerType: 100,
 	}
 
-	g := NewGenerator(nil, config)
+	g := NewGenerator(nil, config, "")
 
 	endpoint := types.Endpoint{
 		Method:  "POST",
@@ -152,7 +152,7 @@ func TestGenerator_GenerateWithLLM(t *testing.T) {
 		LLMConcurrency: 1,
 	}
 
-	g := NewGenerator(mockProvider, config)
+	g := NewGenerator(mockProvider, config, "")
 
 	endpoint := types.Endpoint{
 		Method:          "POST",
@@ -233,7 +233,7 @@ func TestGenerator_GetAttackTypes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewGenerator(nil, tt.config)
+			g := NewGenerator(nil, tt.config, "")
 			attacks := g.getAttackTypes(tt.endpoint)
 
 			attackSet := make(map[string]bool)
@@ -261,7 +261,7 @@ func TestGenerator_LimitPayloads(t *testing.T) {
 		MaxPayloadsPerType: 2,
 	}
 
-	g := NewGenerator(nil, config)
+	g := NewGenerator(nil, config, "")
 
 	requests := []FuzzRequest{
 		{Param: &types.Parameter{Name: "id"}, Payload: Payload{Type: "idor", Value: "1"}},
@@ -296,7 +296,7 @@ func TestGenerator_LimitPayloads(t *testing.T) {
 }
 
 func TestGenerator_FindTargetParam(t *testing.T) {
-	g := NewGenerator(nil, types.AttackSettings{})
+	g := NewGenerator(nil, types.AttackSettings{}, "")
 
 	endpoint := types.Endpoint{
 		Parameters: []types.Parameter{

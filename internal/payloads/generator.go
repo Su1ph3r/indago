@@ -12,9 +12,10 @@ import (
 
 // Generator orchestrates payload generation for attacks
 type Generator struct {
-	provider   llm.Provider
-	config     types.AttackSettings
-	generators map[string]AttackGenerator
+	provider    llm.Provider
+	config      types.AttackSettings
+	generators  map[string]AttackGenerator
+	userContext string
 }
 
 // AttackGenerator interface for specific attack type generators
@@ -46,11 +47,12 @@ type FuzzRequest struct {
 }
 
 // NewGenerator creates a new payload generator
-func NewGenerator(provider llm.Provider, config types.AttackSettings) *Generator {
+func NewGenerator(provider llm.Provider, config types.AttackSettings, userContext string) *Generator {
 	g := &Generator{
-		provider:   provider,
-		config:     config,
-		generators: make(map[string]AttackGenerator),
+		provider:    provider,
+		config:      config,
+		generators:  make(map[string]AttackGenerator),
+		userContext: userContext,
 	}
 
 	// Register attack generators
@@ -270,6 +272,11 @@ func (g *Generator) buildPayloadPrompt(endpoint types.Endpoint) string {
 	var sb strings.Builder
 
 	sb.WriteString("Generate targeted security testing payloads for this API endpoint:\n\n")
+
+	if g.userContext != "" {
+		sb.WriteString(fmt.Sprintf("API Context: %s\n\n", g.userContext))
+	}
+
 	sb.WriteString(fmt.Sprintf("Endpoint: %s %s\n", endpoint.Method, endpoint.Path))
 
 	if endpoint.BusinessContext != "" {

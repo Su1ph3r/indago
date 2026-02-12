@@ -13,13 +13,15 @@ import (
 
 // BusinessAnalyzer uses LLM to understand API business context
 type BusinessAnalyzer struct {
-	provider llm.Provider
+	provider    llm.Provider
+	userContext string
 }
 
 // NewBusinessAnalyzer creates a new business logic analyzer
-func NewBusinessAnalyzer(provider llm.Provider) *BusinessAnalyzer {
+func NewBusinessAnalyzer(provider llm.Provider, userContext string) *BusinessAnalyzer {
 	return &BusinessAnalyzer{
-		provider: provider,
+		provider:    provider,
+		userContext: userContext,
 	}
 }
 
@@ -122,6 +124,13 @@ func (a *BusinessAnalyzer) buildAnalysisPrompt(endpoints []types.Endpoint) strin
 	var sb strings.Builder
 
 	sb.WriteString("Analyze the following API endpoints and provide security insights.\n\n")
+
+	if a.userContext != "" {
+		sb.WriteString("## Additional Context\n")
+		sb.WriteString(a.userContext)
+		sb.WriteString("\n\n")
+	}
+
 	sb.WriteString("## Endpoints\n\n")
 
 	for _, ep := range endpoints {

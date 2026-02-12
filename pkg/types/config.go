@@ -53,6 +53,9 @@ type Config struct {
 
 	// Checkpoint settings
 	Checkpoint CheckpointSettings `yaml:"checkpoint" mapstructure:"checkpoint"`
+
+	// User-provided context about the API being tested
+	UserContext string `yaml:"user_context" mapstructure:"user_context"`
 }
 
 // ProviderConfig holds LLM provider configuration
