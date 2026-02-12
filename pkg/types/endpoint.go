@@ -190,6 +190,14 @@ const (
 
 	// WAF bypass
 	AttackWAFBypass = "waf_bypass"
+
+	// Passive/endpoint-level checks
+	AttackCORSMisconfig        = "cors_misconfig"
+	AttackMethodTampering      = "method_tampering"
+	AttackOpenRedirect         = "open_redirect"
+	AttackMissingHeaders       = "missing_security_headers"
+	AttackContentTypeConfusion = "content_type_confusion"
+	AttackRateLimitMissing     = "rate_limit_missing"
 )
 
 // SensitivityLevel constants

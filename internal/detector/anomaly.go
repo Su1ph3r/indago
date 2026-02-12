@@ -1,6 +1,9 @@
 package detector
 
 import (
+	"net/url"
+	"strings"
+
 	"github.com/su1ph3r/indago/internal/fuzzer"
 	"github.com/su1ph3r/indago/internal/payloads"
 	"github.com/su1ph3r/indago/pkg/types"
@@ -122,6 +125,60 @@ func (d *AnomalyDetector) Detect(result *fuzzer.FuzzResult, baseline *types.HTTP
 				Remediation: "Implement proper output encoding based on context (HTML, JavaScript, URL, CSS).",
 			})
 		}
+
+	case types.AttackMethodTampering:
+		if resp.StatusCode == 200 || resp.StatusCode == 204 {
+			confidence := types.ConfidenceMedium
+			desc := "Endpoint accepted an unexpected HTTP method"
+			if method, ok := req.Payload.Metadata["override_method"]; ok && method == "TRACE" && resp.StatusCode == 200 {
+				confidence = types.ConfidenceHigh
+				desc = "TRACE method is enabled, which can be used for cross-site tracing (XST) attacks"
+			}
+			findings = append(findings, types.Finding{
+				ID:          generateID(),
+				Type:        types.AttackMethodTampering,
+				Severity:    types.SeverityMedium,
+				Confidence:  confidence,
+				Title:       "HTTP Method Tampering Accepted",
+				Description: desc,
+				CWE:         "CWE-650",
+				Remediation: "Explicitly reject unexpected HTTP methods. Disable TRACE in production. Return 405 Method Not Allowed for unsupported methods.",
+			})
+		}
+
+	case types.AttackOpenRedirect:
+		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+			location := resp.Headers["Location"]
+			if location == "" {
+				location = resp.Headers["location"]
+			}
+			if containsAttackerDomain(location) {
+				findings = append(findings, types.Finding{
+					ID:          generateID(),
+					Type:        types.AttackOpenRedirect,
+					Severity:    types.SeverityMedium,
+					Confidence:  types.ConfidenceHigh,
+					Title:       "Open Redirect Detected",
+					Description: "The endpoint redirects to an attacker-controlled URL via the Location header",
+					CWE:         "CWE-601",
+					Remediation: "Validate redirect URLs against an allowlist of trusted domains. Never redirect to user-supplied URLs without validation.",
+				})
+			}
+		}
+
+	case types.AttackContentTypeConfusion:
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			findings = append(findings, types.Finding{
+				ID:          generateID(),
+				Type:        types.AttackContentTypeConfusion,
+				Severity:    types.SeverityLow,
+				Confidence:  types.ConfidenceLow,
+				Title:       "Content-Type Confusion Accepted",
+				Description: "The endpoint accepted a request with a mismatched Content-Type header without returning an error",
+				CWE:         "CWE-436",
+				Remediation: "Validate the Content-Type header and reject requests with unexpected types. Return 415 Unsupported Media Type for mismatched content types.",
+			})
+		}
 	}
 
 	// Compare with baseline if available
@@ -184,6 +241,22 @@ func (d *AnomalyDetector) compareWithBaseline(result *fuzzer.FuzzResult, baselin
 	}
 
 	return findings
+}
+
+// containsAttackerDomain checks if a URL's hostname matches an attacker-controlled domain.
+func containsAttackerDomain(location string) bool {
+	u, err := url.Parse(location)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	attackerDomains := []string{"evil.com", "evil-cors-test.com"}
+	for _, domain := range attackerDomains {
+		if host == domain || strings.HasSuffix(host, "."+domain) {
+			return true
+		}
+	}
+	return false
 }
 
 // checkStatusCodeAnomalies checks for interesting status code patterns

@@ -74,6 +74,15 @@ func NewGenerator(provider llm.Provider, config types.AttackSettings, userContex
 	g.generators[types.AttackSSTI] = NewSSTIGenerator()
 	g.generators[types.AttackJWT] = NewJWTGenerator()
 
+	// New active generators
+	g.generators[types.AttackMethodTampering] = NewMethodTamperingGenerator()
+	g.generators[types.AttackOpenRedirect] = NewOpenRedirectGenerator()
+	g.generators[types.AttackContentTypeConfusion] = NewContentTypeConfusionGenerator()
+
+	// Register existing generators that were previously unwired
+	g.generators["graphql"] = NewGraphQLGenerator(GraphQLSettings{})
+	g.generators["blind"] = NewBlindGenerator(BlindSettings{})
+
 	return g
 }
 
@@ -208,11 +217,34 @@ func (g *Generator) getAttackTypes(endpoint types.Endpoint) []string {
 		types.AttackSQLi,
 		types.AttackXSS,
 		types.AttackAuthBypass,
+		types.AttackMethodTampering,
 	}
 
 	// Add based on method
 	if endpoint.Method == "POST" || endpoint.Method == "PUT" || endpoint.Method == "PATCH" {
 		allAttacks = append(allAttacks, types.AttackMassAssignment)
+		allAttacks = append(allAttacks, types.AttackContentTypeConfusion)
+	}
+
+	// Add open redirect if redirect-like params exist
+	for _, p := range endpoint.Parameters {
+		if isRedirectParam(p.Name) {
+			allAttacks = append(allAttacks, types.AttackOpenRedirect)
+			break
+		}
+	}
+	if endpoint.Body != nil {
+		for _, f := range endpoint.Body.Fields {
+			if isRedirectParam(f.Name) {
+				allAttacks = append(allAttacks, types.AttackOpenRedirect)
+				break
+			}
+		}
+	}
+
+	// Add GraphQL attacks for GraphQL endpoints
+	if strings.Contains(strings.ToLower(endpoint.Path), "/graphql") {
+		allAttacks = append(allAttacks, "graphql")
 	}
 
 	// Add from suggested attacks

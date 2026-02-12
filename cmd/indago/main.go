@@ -264,6 +264,9 @@ func init() {
 	// Phase 4 flags
 	scanCmd.Flags().Bool("interactive", false, "Run in interactive TUI mode")
 
+	// Passive checks
+	scanCmd.Flags().Bool("passive-checks", false, "Run passive endpoint checks (rate limits, CORS, headers)")
+
 	// Cross-tool integration flags (Phase 4)
 	scanCmd.Flags().String("targets-from", "", "Import targets from external tool export (Reticustos/Ariadne JSON)")
 	scanCmd.Flags().String("export-waf-blocked", "", "Export WAF-blocked findings to file for BypassBurrito")
@@ -489,11 +492,27 @@ func runScan(cmd *cobra.Command, args []string) error {
 	// Initialize scan stats
 	scanStats := types.NewScanStats()
 
+	// Run passive endpoint checks (rate limits, CORS, security headers)
+	var passiveFindings []types.Finding
+	runPassive, _ := cmd.Flags().GetBool("passive-checks")
+	if runPassive {
+		printInfo("Running passive endpoint checks...")
+		passiveRunner := payloads.NewPassiveCheckRunner()
+		passiveRunner.Register(payloads.NewRateLimitChecker())
+		passiveRunner.Register(payloads.NewCORSChecker())
+		passiveRunner.Register(payloads.NewSecurityHeaderChecker())
+		passiveFindings = passiveRunner.RunAll(ctx, endpoints, engine.Client())
+		if len(passiveFindings) > 0 {
+			printInfo("Passive checks found %d issues", len(passiveFindings))
+		}
+	}
+
 	// Run fuzzing
 	printInfo("Starting scan...")
 	startTime := time.Now()
 
 	var findings []types.Finding
+	findings = append(findings, passiveFindings...)
 	results := engine.Fuzz(ctx, fuzzRequests)
 
 	// Process results

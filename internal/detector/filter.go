@@ -112,8 +112,10 @@ func (f *FindingFilter) attackTypeConfidenceBoost(attackType string) float64 {
 
 	// Some types tend to have more false positives
 	lowConfidenceTypes := map[string]float64{
-		types.AttackXSS:       -0.05, // Reflection != exploitation
-		types.AttackRateLimit: -0.1,  // Often not a real vulnerability
+		types.AttackXSS:                -0.05, // Reflection != exploitation
+		types.AttackRateLimit:          -0.1,  // Often not a real vulnerability
+		types.AttackMissingHeaders:     -0.1,  // Informational, not exploitable alone
+		types.AttackContentTypeConfusion: -0.05, // Often benign parser flexibility
 	}
 
 	if boost, ok := highConfidenceTypes[attackType]; ok {
@@ -257,6 +259,15 @@ func NewNoiseFilter() *NoiseFilter {
 						(f.Payload == "" || len(f.Payload) < 3)
 				},
 				Description: "Empty or trivial XSS payloads",
+			},
+			{
+				Name: "method_tampering_options",
+				Condition: func(f types.Finding) bool {
+					// OPTIONS is normal CORS preflight, not a method tampering finding
+					return f.Type == types.AttackMethodTampering &&
+						f.Method == "OPTIONS"
+				},
+				Description: "Method tampering on OPTIONS (normal CORS preflight)",
 			},
 		},
 	}

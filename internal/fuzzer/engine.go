@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -237,14 +238,22 @@ func (e *Engine) buildRequest(ctx context.Context, fuzzReq payloads.FuzzRequest)
 		body = e.buildBody(ep.Body, fuzzReq)
 	}
 
+	// Determine the HTTP method — may be overridden by payload metadata
+	method := ep.Method
+	if m, ok := fuzzReq.Payload.Metadata["override_method"]; ok && m != "" {
+		if isValidHTTPMethod(m) {
+			method = m
+		}
+	}
+
 	// Create request
 	var req *http.Request
 	var err error
 
 	if body != "" {
-		req, err = http.NewRequestWithContext(ctx, ep.Method, targetURL, stringReader(body))
+		req, err = http.NewRequestWithContext(ctx, method, targetURL, stringReader(body))
 	} else {
-		req, err = http.NewRequestWithContext(ctx, ep.Method, targetURL, nil)
+		req, err = http.NewRequestWithContext(ctx, method, targetURL, nil)
 	}
 
 	if err != nil {
@@ -274,6 +283,21 @@ func (e *Engine) buildRequest(ctx context.Context, fuzzReq payloads.FuzzRequest)
 			req.Header.Set("Content-Type", ep.Body.ContentType)
 		} else {
 			req.Header.Set("Content-Type", "application/json")
+		}
+	}
+
+	// Apply payload metadata overrides
+	if ct, ok := fuzzReq.Payload.Metadata["override_content_type"]; ok && ct != "" {
+		req.Header.Set("Content-Type", ct)
+	}
+	if _, ok := fuzzReq.Payload.Metadata["remove_content_type"]; ok {
+		req.Header.Del("Content-Type")
+	}
+	if hdr, ok := fuzzReq.Payload.Metadata["inject_header"]; ok && hdr != "" {
+		if val, ok2 := fuzzReq.Payload.Metadata["inject_header_value"]; ok2 {
+			if isAllowedOverrideHeader(hdr) {
+				req.Header.Set(hdr, val)
+			}
 		}
 	}
 
@@ -364,6 +388,27 @@ func (e *Engine) GetStats() *Stats {
 		EndTime:        e.stats.EndTime,
 		RequestsPerSec: e.stats.RequestsPerSec,
 	}
+}
+
+// Client returns the underlying HTTP client for use by passive checks.
+func (e *Engine) Client() *http.Client { return e.client }
+
+// isValidHTTPMethod validates that a method string is a known HTTP method.
+func isValidHTTPMethod(method string) bool {
+	switch strings.ToUpper(method) {
+	case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE":
+		return true
+	}
+	return false
+}
+
+// isAllowedOverrideHeader validates that a header name is in the allowlist for metadata injection.
+func isAllowedOverrideHeader(header string) bool {
+	switch strings.ToLower(header) {
+	case "x-http-method-override", "x-method-override", "x-http-method":
+		return true
+	}
+	return false
 }
 
 // GetBaseline fetches a baseline response for comparison

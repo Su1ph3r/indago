@@ -278,8 +278,8 @@ func (a *BusinessAnalyzer) buildAttackPrompt(ep types.Endpoint) string {
 Generate attack vectors as JSON array:
 [
   {
-    "type": "idor|sqli|nosqli|command_injection|xss|auth_bypass|mass_assignment|bola|bfla|rate_limit|data_exposure|ssrf|path_traversal",
-    "category": "authorization|injection|information_disclosure|authentication",
+    "type": "idor|sqli|nosqli|command_injection|xss|auth_bypass|mass_assignment|bola|bfla|rate_limit|data_exposure|ssrf|path_traversal|cors_misconfig|method_tampering|open_redirect|content_type_confusion",
+    "category": "authorization|injection|information_disclosure|authentication|configuration|redirect|parser_confusion",
     "priority": "high|medium|low",
     "rationale": "Why this attack is relevant for this specific endpoint",
     "target_param": "specific parameter to target",
@@ -293,6 +293,10 @@ Consider:
 - File/path parameters for traversal
 - The HTTP method and its typical vulnerabilities
 - Business logic based on the endpoint purpose
+- Redirect-like parameters (redirect_uri, return_to, callback, next, url) for open redirect
+- POST/PUT/PATCH endpoints for content-type confusion
+- Endpoints that should have method restrictions for method tampering
+- CORS configuration relevance
 
 Respond with JSON array only.`)
 
