@@ -30,12 +30,13 @@ type Engine struct {
 
 // FuzzResult represents the result of a fuzz request
 type FuzzResult struct {
-	Request   *payloads.FuzzRequest
-	Response  *types.HTTPResponse
-	Baseline  *types.HTTPResponse
-	Error     error
-	Duration  time.Duration
-	Timestamp time.Time
+	Request       *payloads.FuzzRequest
+	ActualRequest *types.HTTPRequest // The actual HTTP request that was sent (with payload, session headers, etc.)
+	Response      *types.HTTPResponse
+	Baseline      *types.HTTPResponse
+	Error         error
+	Duration      time.Duration
+	Timestamp     time.Time
 }
 
 // Stats tracks fuzzing statistics
@@ -178,7 +179,7 @@ func (e *Engine) executeRequest(ctx context.Context, fuzzReq payloads.FuzzReques
 	}
 
 	// Build the HTTP request
-	httpReq, err := e.buildRequest(ctx, fuzzReq)
+	httpReq, bodyStr, err := e.buildRequest(ctx, fuzzReq)
 	if err != nil {
 		result.Error = fmt.Errorf("failed to build request: %w", err)
 		return result
@@ -186,6 +187,18 @@ func (e *Engine) executeRequest(ctx context.Context, fuzzReq payloads.FuzzReques
 
 	// Apply session/auth
 	e.session.Apply(httpReq)
+
+	// Capture the actual request (after session headers applied)
+	actualHeaders := make(map[string]string)
+	for key, values := range httpReq.Header {
+		actualHeaders[key] = strings.Join(values, ", ")
+	}
+	result.ActualRequest = &types.HTTPRequest{
+		Method:  httpReq.Method,
+		URL:     httpReq.URL.String(),
+		Headers: actualHeaders,
+		Body:    bodyStr,
+	}
 
 	// Execute request with retry
 	start := time.Now()
@@ -201,8 +214,9 @@ func (e *Engine) executeRequest(ctx context.Context, fuzzReq payloads.FuzzReques
 	return result
 }
 
-// buildRequest builds an HTTP request from a fuzz request
-func (e *Engine) buildRequest(ctx context.Context, fuzzReq payloads.FuzzRequest) (*http.Request, error) {
+// buildRequest builds an HTTP request from a fuzz request.
+// Returns the http.Request and the request body string (for evidence capture).
+func (e *Engine) buildRequest(ctx context.Context, fuzzReq payloads.FuzzRequest) (*http.Request, string, error) {
 	ep := fuzzReq.Endpoint
 
 	// Build URL with path parameters
@@ -257,7 +271,7 @@ func (e *Engine) buildRequest(ctx context.Context, fuzzReq payloads.FuzzRequest)
 	}
 
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	// Set headers
@@ -301,7 +315,7 @@ func (e *Engine) buildRequest(ctx context.Context, fuzzReq payloads.FuzzRequest)
 		}
 	}
 
-	return req, nil
+	return req, body, nil
 }
 
 // buildBody builds the request body
@@ -418,7 +432,7 @@ func (e *Engine) GetBaseline(ctx context.Context, endpoint types.Endpoint) (*typ
 		Endpoint: endpoint,
 	}
 
-	httpReq, err := e.buildRequest(ctx, fuzzReq)
+	httpReq, _, err := e.buildRequest(ctx, fuzzReq)
 	if err != nil {
 		return nil, err
 	}

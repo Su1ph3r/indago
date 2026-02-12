@@ -6,10 +6,36 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/su1ph3r/indago/pkg/types"
 )
+
+// severityRank returns a numeric rank for severity (lower = more severe).
+func severityRank(severity string) int {
+	switch severity {
+	case types.SeverityCritical:
+		return 0
+	case types.SeverityHigh:
+		return 1
+	case types.SeverityMedium:
+		return 2
+	case types.SeverityLow:
+		return 3
+	case types.SeverityInfo:
+		return 4
+	default:
+		return 5
+	}
+}
+
+// SortFindingsBySeverity sorts findings from highest severity to lowest.
+func SortFindingsBySeverity(findings []types.Finding) {
+	sort.SliceStable(findings, func(i, j int) bool {
+		return severityRank(findings[i].Severity) < severityRank(findings[j].Severity)
+	})
+}
 
 // Reporter interface for generating reports
 type Reporter interface {

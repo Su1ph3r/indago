@@ -54,12 +54,20 @@ func (a *Analyzer) AnalyzeResult(result *fuzzer.FuzzResult, baseline *types.HTTP
 
 	// Add evidence to all findings
 	for i := range findings {
-		findings[i].Evidence = &types.Evidence{
-			Request: &types.HTTPRequest{
+		// Use the actual HTTP request if captured by the fuzzer, otherwise fall back to endpoint data
+		var evidenceReq *types.HTTPRequest
+		if result.ActualRequest != nil {
+			evidenceReq = result.ActualRequest
+		} else {
+			evidenceReq = &types.HTTPRequest{
 				Method:  req.Endpoint.Method,
 				URL:     req.Endpoint.FullPath(),
 				Headers: req.Endpoint.Headers,
-			},
+			}
+		}
+
+		findings[i].Evidence = &types.Evidence{
+			Request:      evidenceReq,
 			Response:     resp,
 			BaselineResp: baseline,
 		}

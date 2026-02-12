@@ -54,6 +54,9 @@ func (r *HTMLReporter) Write(result *types.ScanResult, w io.Writer) error {
 		return fmt.Errorf("failed to parse template: %w", err)
 	}
 
+	// Sort findings by severity (critical first)
+	SortFindingsBySeverity(result.Findings)
+
 	data := struct {
 		*types.ScanResult
 		Title       string
@@ -504,7 +507,7 @@ const htmlTemplate = `<!DOCTYPE html>
                             {{end}}
                             {{if .Evidence.Request.Body}}
                             <div class="detail-label">Body</div>
-                            <div class="http-body">{{truncate .Evidence.Request.Body 1000}}</div>
+                            <div class="http-body">{{.Evidence.Request.Body}}</div>
                             {{end}}
                         </div>
                     </div>
@@ -526,7 +529,7 @@ const htmlTemplate = `<!DOCTYPE html>
                             {{end}}
                             {{if .Evidence.Response.Body}}
                             <div class="detail-label">Body</div>
-                            <div class="http-body">{{truncate .Evidence.Response.Body 2000}}</div>
+                            <div class="http-body">{{.Evidence.Response.Body}}</div>
                             {{end}}
                         </div>
                     </div>

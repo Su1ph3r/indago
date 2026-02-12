@@ -127,7 +127,7 @@ func (r *MarkdownReporter) Write(result *types.ScanResult, w io.Writer) error {
 
 				// Payload
 				if f.Payload != "" {
-					fmt.Fprintf(w, "**Payload:**\n\n```\n%s\n```\n\n", TruncateString(f.Payload, 500))
+					fmt.Fprintf(w, "**Payload:**\n\n```\n%s\n```\n\n", f.Payload)
 				}
 
 				// Evidence
@@ -140,7 +140,7 @@ func (r *MarkdownReporter) Write(result *types.ScanResult, w io.Writer) error {
 							fmt.Fprintf(w, "%s: %s\n", k, v)
 						}
 						if f.Evidence.Request.Body != "" {
-							fmt.Fprintf(w, "\n%s\n", TruncateString(f.Evidence.Request.Body, 500))
+							fmt.Fprintf(w, "\n%s\n", f.Evidence.Request.Body)
 						}
 						fmt.Fprintf(w, "```\n\n")
 					}
@@ -150,7 +150,7 @@ func (r *MarkdownReporter) Write(result *types.ScanResult, w io.Writer) error {
 						for k, v := range f.Evidence.Response.Headers {
 							fmt.Fprintf(w, "%s: %s\n", k, v)
 						}
-						fmt.Fprintf(w, "\n%s\n", TruncateString(f.Evidence.Response.Body, 1000))
+						fmt.Fprintf(w, "\n%s\n", f.Evidence.Response.Body)
 						fmt.Fprintf(w, "```\n\n")
 					}
 

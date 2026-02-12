@@ -5,6 +5,13 @@ All notable changes to Indago will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-02-12
+
+### Improved
+- **Report findings sorted by severity**: All output formats (HTML, JSON, SARIF, Burp XML) now sort findings from Critical → High → Medium → Low → Info for easier triage
+- **Actual HTTP request/response in evidence**: Reports now show the real HTTP request that was sent (including payload-injected URL, session/auth headers, request body) instead of reconstructed endpoint metadata
+- **Full evidence bodies**: Removed artificial truncation of request and response bodies in HTML, JSON, and Markdown reports — full evidence is now preserved for accurate analysis
+
 ## [1.2.1] - 2026-02-12
 
 ### Added

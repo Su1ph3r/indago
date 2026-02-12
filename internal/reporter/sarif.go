@@ -45,6 +45,8 @@ func (r *SARIFReporter) Write(result *types.ScanResult, w io.Writer) error {
 
 // buildSARIF builds the SARIF structure
 func (r *SARIFReporter) buildSARIF(result *types.ScanResult) *SARIFLog {
+	// Sort findings by severity (critical first)
+	SortFindingsBySeverity(result.Findings)
 	sarif := &SARIFLog{
 		Schema:  "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
 		Version: "2.1.0",

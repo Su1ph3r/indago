@@ -46,6 +46,9 @@ func (r *JSONReporter) Write(result *types.ScanResult, w io.Writer) error {
 
 // prepareOutput prepares the output structure
 func (r *JSONReporter) prepareOutput(result *types.ScanResult) interface{} {
+	// Sort findings by severity (critical first)
+	SortFindingsBySeverity(result.Findings)
+
 	if r.options.IncludeRaw && r.options.IncludeConfig {
 		return result
 	}
@@ -91,14 +94,14 @@ func (r *JSONReporter) prepareOutput(result *types.ScanResult) interface{} {
 					Method:  f.Evidence.Request.Method,
 					URL:     f.Evidence.Request.URL,
 					Headers: f.Evidence.Request.Headers,
-					Body:    TruncateString(f.Evidence.Request.Body, 1000),
+					Body:    f.Evidence.Request.Body,
 				}
 			}
 			if f.Evidence.Response != nil {
 				finding.Evidence.Response = &JSONResponse{
 					StatusCode: f.Evidence.Response.StatusCode,
 					Headers:    f.Evidence.Response.Headers,
-					Body:       TruncateString(f.Evidence.Response.Body, 2000),
+					Body:       f.Evidence.Response.Body,
 				}
 			}
 		}

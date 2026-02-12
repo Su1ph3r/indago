@@ -94,6 +94,9 @@ type BurpData struct {
 
 // buildExport builds the Burp export structure from scan results
 func (r *BurpReporter) buildExport(result *types.ScanResult) *BurpExport {
+	// Sort findings by severity (critical first)
+	SortFindingsBySeverity(result.Findings)
+
 	export := &BurpExport{
 		Version: "2023.1", // Burp version compatibility
 		Items:   make([]BurpItem, 0, len(result.Findings)),
