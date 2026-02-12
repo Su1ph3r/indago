@@ -80,6 +80,10 @@ indago scan --spec api.yaml --provider anthropic
 indago scan --spec api.yaml --provider lmstudio --llm-url http://localhost:1234/v1 \
   --use-llm-payloads --llm-concurrency 20
 
+# Provide domain context for more targeted analysis
+indago scan --spec api.yaml --provider anthropic --use-llm-payloads \
+  --context "E-commerce API with payment processing and user accounts"
+
 # Scan without AI (uses heuristic-based analysis)
 indago scan --spec api.yaml
 
@@ -269,6 +273,7 @@ LLM Flags:
       --model string          LLM model to use
       --api-key string        API key for LLM provider
       --llm-url string        Base URL for local LLM
+      --context string         User-provided API context for LLM analysis
       --use-llm-payloads      Generate context-aware payloads using LLM
       --llm-concurrency int   Concurrent LLM payload generators (default 8)
 

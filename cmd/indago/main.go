@@ -31,7 +31,7 @@ import (
 )
 
 var (
-	version = "1.2.0"
+	version = "1.2.1"
 	cfgFile string
 	config  *types.Config
 )
@@ -248,7 +248,7 @@ func init() {
 	scanCmd.Flags().StringSlice("skip-attacks", []string{}, "Attack types to skip")
 	scanCmd.Flags().Bool("use-llm-payloads", false, "Generate additional context-aware payloads using LLM")
 	scanCmd.Flags().Int("llm-concurrency", 8, "Number of concurrent LLM calls for payload generation")
-	scanCmd.Flags().String("context", "", "User-provided context about the API (e.g., 'ServiceNow integration for user management')")
+	scanCmd.Flags().String("context", "", "User-provided context about the API (e.g., 'E-commerce API with payment processing and user accounts')")
 
 	// New flags for Phase 1.2
 	scanCmd.Flags().Bool("dry-run", false, "Show what would be tested without making requests")
