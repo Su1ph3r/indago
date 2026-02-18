@@ -89,6 +89,7 @@ type ReportOptions struct {
 	Verbose       bool   // Verbose output
 	Title         string // Custom report title
 	OutputDir     string // Output directory for additional files
+	Version       string // Application version for report headers
 }
 
 // DefaultOptions returns default report options

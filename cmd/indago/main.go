@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -18,20 +19,29 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/su1ph3r/indago/internal/analyzer"
+	"github.com/su1ph3r/indago/internal/callback"
+	"github.com/su1ph3r/indago/internal/chains"
+	"github.com/su1ph3r/indago/internal/checkpoint"
 	"github.com/su1ph3r/indago/internal/credentials"
 	"github.com/su1ph3r/indago/internal/detector"
 	"github.com/su1ph3r/indago/internal/fuzzer"
 	"github.com/su1ph3r/indago/internal/importer"
+	"github.com/su1ph3r/indago/internal/inference"
 	"github.com/su1ph3r/indago/internal/llm"
 	"github.com/su1ph3r/indago/internal/parser"
 	"github.com/su1ph3r/indago/internal/payloads"
+	"github.com/su1ph3r/indago/internal/plugin"
 	"github.com/su1ph3r/indago/internal/reporter"
+	"github.com/su1ph3r/indago/internal/rules"
 	"github.com/su1ph3r/indago/internal/tui"
+	"github.com/su1ph3r/indago/internal/verify"
+	"github.com/su1ph3r/indago/internal/waf"
 	"github.com/su1ph3r/indago/pkg/types"
+	"gopkg.in/yaml.v3"
 )
 
 var (
-	version = "1.3.1"
+	version = "1.4.0"
 	cfgFile string
 	config  *types.Config
 )
@@ -257,6 +267,7 @@ func init() {
 
 	// Phase 3 flags
 	scanCmd.Flags().Bool("verify", false, "Verify findings with additional testing")
+	scanCmd.Flags().Int("verify-passes", 1, "Number of LLM verification passes (1=standard, 2+=confirmation loops, max 5)")
 	scanCmd.Flags().String("resume", "", "Resume from checkpoint file")
 	scanCmd.Flags().String("checkpoint", "", "Checkpoint file path")
 	scanCmd.Flags().Duration("checkpoint-interval", 30*time.Second, "Checkpoint save interval")
@@ -270,6 +281,42 @@ func init() {
 	// Cross-tool integration flags (Phase 4)
 	scanCmd.Flags().String("targets-from", "", "Import targets from external tool export (Reticustos/Ariadne JSON)")
 	scanCmd.Flags().String("export-waf-blocked", "", "Export WAF-blocked findings to file for BypassBurrito")
+
+	// Ecosystem integration flags (Phase 1 new)
+	scanCmd.Flags().String("import-bypasses", "", "Import BypassBurrito bypass results to use as payloads")
+	scanCmd.Flags().String("export-vinculum", "", "Export findings in Vinculum correlation format")
+	scanCmd.Flags().String("export-ariadne", "", "Export findings with attack path context for Ariadne")
+	scanCmd.Flags().String("import-container-context", "", "Import Cepheus container posture data to enrich findings")
+	scanCmd.Flags().String("import-cloud-audit", "", "Import Nubicustos cloud audit findings to enrich attack surface")
+
+	// WAF detection
+	scanCmd.Flags().Bool("detect-waf", false, "Enable WAF detection and bypass payload generation")
+
+	// Callback/OOB detection
+	scanCmd.Flags().String("callback-url", "", "External URL for out-of-band vulnerability detection")
+	scanCmd.Flags().Int("callback-port", 8888, "HTTP port for callback server")
+
+	// Attack chains
+	scanCmd.Flags().Bool("attack-chains", false, "Discover and execute multi-step attack chains")
+
+	// Business rules
+	scanCmd.Flags().String("rules-file", "", "Business rules YAML file for targeted security testing")
+
+	// Plugin system
+	scanCmd.Flags().String("plugin-dir", "", "Directory containing custom plugin payload/matcher files")
+	scanCmd.Flags().StringSlice("plugin-payloads", []string{}, "Custom payload files (JSON/TXT)")
+	scanCmd.Flags().StringSlice("plugin-matchers", []string{}, "Custom response matcher files (JSON)")
+
+	// Schema inference
+	scanCmd.Flags().String("infer-schema", "", "Infer API schema from traffic and save as OpenAPI spec")
+
+	// Differential analysis
+	scanCmd.Flags().StringSlice("diff-auth", []string{}, "Auth contexts for differential analysis (format: name=token)")
+	scanCmd.Flags().String("diff-auth-file", "", "YAML file with auth contexts for differential analysis")
+
+	// Stateful session tracking
+	scanCmd.Flags().Bool("stateful", false, "Enable stateful session tracking (extract and reuse tokens/IDs)")
+	scanCmd.Flags().String("extract-file", "", "YAML file with custom extraction rules")
 
 	// Add commands
 	rootCmd.AddCommand(scanCmd)
@@ -391,6 +438,43 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 	printInfo("Parsed %d endpoints", len(endpoints))
 
+	// Schema inference from traffic (HAR/Burp input)
+	inferOutput, _ := cmd.Flags().GetString("infer-schema")
+	if inferOutput != "" {
+		inferOutput = filepath.Clean(inferOutput)
+	}
+	if inferOutput != "" && (inputType == types.InputTypeHAR || inputType == types.InputTypeBurp) {
+		printInfo("Inferring API schema from captured traffic...")
+		inferrer := inference.NewSchemaInferrer(inference.InferenceSettings{
+			MinConfidence:    config.Inference.MinConfidence,
+			ClusterThreshold: config.Inference.ClusterThreshold,
+		})
+		for _, ep := range endpoints {
+			inferrer.AddRequest(inference.CapturedRequest{
+				Method: ep.Method,
+				Path:   ep.Path,
+				URL:    ep.BaseURL + ep.Path,
+			})
+		}
+		inferredEndpoints, inferErr := inferrer.Infer()
+		if inferErr != nil {
+			printWarning("Schema inference failed: %v", inferErr)
+		} else {
+			endpoints = mergeEndpoints(endpoints, inferredEndpoints)
+			gen := inference.NewOpenAPIGenerator("Inferred API", "1.0.0", "Auto-inferred from traffic")
+			spec, genErr := gen.Generate(inferredEndpoints)
+			if genErr == nil {
+				if specJSON, jsonErr := spec.ToJSON(); jsonErr == nil {
+					if writeErr := os.WriteFile(inferOutput, specJSON, 0600); writeErr != nil {
+						printWarning("Failed to save inferred schema: %v", writeErr)
+					} else {
+						printInfo("Saved inferred OpenAPI spec to: %s", inferOutput)
+					}
+				}
+			}
+		}
+	}
+
 	// Setup LLM provider if configured
 	var provider llm.Provider
 	providerName, _ := cmd.Flags().GetString("provider")
@@ -429,12 +513,139 @@ func runScan(cmd *cobra.Command, args []string) error {
 	// Configure scan settings from flags
 	updateConfigFromFlags(cmd)
 
+	// Load business rules if specified
+	rulesFile, _ := cmd.Flags().GetString("rules-file")
+	var ruleTestCases []rules.RuleTestCase
+	if rulesFile != "" {
+		rulesFile = filepath.Clean(rulesFile)
+		printInfo("Loading business rules from: %s", rulesFile)
+		ruleParser := rules.NewRuleParser()
+		ruleSet, ruleErr := ruleParser.ParseFile(rulesFile)
+		if ruleErr != nil {
+			printWarning("Failed to parse rules file: %v", ruleErr)
+		} else if provider != nil {
+			translator := rules.NewRuleTranslator(provider)
+			testCases, transErr := translator.TranslateRules(ctx, ruleSet.Rules, endpoints)
+			if transErr != nil {
+				printWarning("Failed to translate rules: %v", transErr)
+			} else {
+				ruleTestCases = testCases
+				printInfo("Generated %d test cases from %d business rules", len(testCases), len(ruleSet.Rules))
+			}
+		} else {
+			printWarning("Business rules require --provider for LLM translation")
+		}
+	}
+
+	// Load plugins
+	pluginDir, _ := cmd.Flags().GetString("plugin-dir")
+	pluginPayloadFiles, _ := cmd.Flags().GetStringSlice("plugin-payloads")
+	pluginMatcherFiles, _ := cmd.Flags().GetStringSlice("plugin-matchers")
+	if pluginDir != "" {
+		pluginDir = filepath.Clean(pluginDir)
+	}
+
+	var pluginRegistry *plugin.PluginRegistry
+	if pluginDir != "" || len(pluginPayloadFiles) > 0 || len(pluginMatcherFiles) > 0 {
+		pluginRegistry = plugin.NewRegistry()
+		loader := plugin.NewLoader(pluginRegistry)
+		for _, pf := range pluginPayloadFiles {
+			cleanPath, err := sanitizePluginPath(pf)
+			if err != nil {
+				printWarning("Skipping plugin payload: %v", err)
+				continue
+			}
+			if err := loader.LoadPayloadFile(cleanPath); err != nil {
+				printWarning("Failed to load plugin payloads %s: %v", cleanPath, err)
+			}
+		}
+		for _, mf := range pluginMatcherFiles {
+			cleanPath, err := sanitizePluginPath(mf)
+			if err != nil {
+				printWarning("Skipping plugin matcher: %v", err)
+				continue
+			}
+			if err := loader.LoadMatcherFile(cleanPath); err != nil {
+				printWarning("Failed to load plugin matchers %s: %v", cleanPath, err)
+			}
+		}
+		if pluginDir != "" {
+			dirLoader := plugin.NewLoader(pluginRegistry)
+			jsonFiles, _ := filepath.Glob(filepath.Join(pluginDir, "*.json"))
+			for _, f := range jsonFiles {
+				cleanPath, err := sanitizePluginPath(f)
+				if err != nil {
+					printWarning("Skipping plugin file: %v", err)
+					continue
+				}
+				if err := dirLoader.LoadPayloadFile(cleanPath); err != nil {
+					printWarning("Failed to load plugin file %s: %v", cleanPath, err)
+				}
+			}
+			txtFiles, _ := filepath.Glob(filepath.Join(pluginDir, "*.txt"))
+			for _, f := range txtFiles {
+				cleanPath, err := sanitizePluginPath(f)
+				if err != nil {
+					printWarning("Skipping plugin file: %v", err)
+					continue
+				}
+				if err := dirLoader.LoadPayloadFile(cleanPath); err != nil {
+					printWarning("Failed to load plugin file %s: %v", cleanPath, err)
+				}
+			}
+		}
+		printInfo("Loaded %d attack plugins, %d response matchers",
+			len(pluginRegistry.GetAttackPlugins()), len(pluginRegistry.GetResponseMatchers()))
+	}
+
+	// Setup callback server for OOB detection (must happen before payload generation)
+	callbackURL, _ := cmd.Flags().GetString("callback-url")
+	var callbackServer *callback.CallbackServer
+	if callbackURL != "" {
+		callbackPort, _ := cmd.Flags().GetInt("callback-port")
+		cbSettings := callback.CallbackSettings{
+			HTTPPort:    callbackPort,
+			ExternalURL: callbackURL,
+			Timeout:     config.Callback.Timeout,
+		}
+		callbackServer = callback.NewCallbackServer(cbSettings)
+		if err := callbackServer.Start(ctx); err != nil {
+			printWarning("Callback server failed to start: %v", err)
+			callbackServer = nil
+		} else {
+			defer callbackServer.Stop()
+			printInfo("Callback server listening on port %d (external: %s)", callbackPort, callbackURL)
+		}
+	}
+
+	// Import Nubicustos cloud audit if specified
+	importCloudFile, _ := cmd.Flags().GetString("import-cloud-audit")
+	if importCloudFile != "" {
+		importCloudFile = filepath.Clean(importCloudFile)
+		cloudImport, cloudErr := importer.LoadNubicustosFindings(importCloudFile)
+		if cloudErr != nil {
+			printWarning("Failed to load Nubicustos cloud audit: %v", cloudErr)
+		} else {
+			endpoints = importer.EnrichEndpointsFromCloud(cloudImport, endpoints)
+			printInfo("Enriched endpoints with %d cloud findings from Nubicustos", len(cloudImport.Findings))
+		}
+	}
+
 	// Generate payloads
 	printInfo("Generating payloads...")
 	if config.Attacks.UseLLMPayloads && provider != nil {
 		printInfo("Dynamic LLM payload generation enabled (concurrency: %d)", config.Attacks.LLMConcurrency)
 	}
 	payloadGen := payloads.NewGenerator(provider, config.Attacks, config.UserContext)
+
+	// Pass callback URLs to blind payload generator
+	if callbackServer != nil {
+		token := callbackServer.RegisterCallback("blind-payloads", "blind", types.Endpoint{}, "")
+		httpCB := callbackServer.GetHTTPCallback(token)
+		dnsCB := callbackServer.GetDNSCallback(token)
+		payloadGen.SetBlindCallbacks(httpCB, dnsCB)
+		printInfo("Blind payloads will use callback URL: %s", httpCB)
+	}
 	var fuzzRequests []payloads.FuzzRequest
 
 	// Use parallel processing for payload generation
@@ -465,7 +676,64 @@ func runScan(cmd *cobra.Command, args []string) error {
 			fuzzRequests = append(fuzzRequests, reqs...)
 		}
 	}
+	// Append fuzz requests from business rules
+	if len(ruleTestCases) > 0 {
+		ruleFuzzReqs := rulesToFuzzRequests(ruleTestCases, endpoints)
+		fuzzRequests = append(fuzzRequests, ruleFuzzReqs...)
+	}
+
+	// Import BypassBurrito bypasses if specified
+	importBypassesFile, _ := cmd.Flags().GetString("import-bypasses")
+	if importBypassesFile != "" {
+		importBypassesFile = filepath.Clean(importBypassesFile)
+		bypassImport, bypassErr := importer.LoadBurritoBypasses(importBypassesFile)
+		if bypassErr != nil {
+			printWarning("Failed to load BypassBurrito bypasses: %v", bypassErr)
+		} else {
+			bypassReqs := importer.BypassesToFuzzRequests(bypassImport, endpoints)
+			if len(bypassReqs) > 0 {
+				// Prepend bypass payloads for priority execution
+				fuzzRequests = append(bypassReqs, fuzzRequests...)
+				printInfo("Imported %d bypass payloads from BypassBurrito", len(bypassReqs))
+			}
+		}
+	}
+
 	printInfo("Generated %d fuzz requests", len(fuzzRequests))
+
+	// Setup checkpoint manager
+	resumePath, _ := cmd.Flags().GetString("resume")
+	checkpointPath, _ := cmd.Flags().GetString("checkpoint")
+	checkpointInterval, _ := cmd.Flags().GetDuration("checkpoint-interval")
+
+	var cpManager *checkpoint.Manager
+	var restoredFindings []types.Finding
+	if resumePath != "" {
+		cpManager, err = checkpoint.LoadAndResume(resumePath)
+		if err != nil {
+			return fmt.Errorf("failed to resume from checkpoint: %w", err)
+		}
+		restoredFindings = cpManager.GetFindings()
+		if len(restoredFindings) > 0 {
+			printInfo("Restored %d findings from checkpoint", len(restoredFindings))
+		}
+		fuzzRequests = cpManager.FilterPendingRequests(fuzzRequests, func(r payloads.FuzzRequest) string {
+			return r.Endpoint.Method + ":" + r.Endpoint.Path + ":" + r.Payload.Value
+		})
+		printInfo("Resumed from checkpoint: %d requests remaining", len(fuzzRequests))
+	} else {
+		cpConfig := checkpoint.DefaultManagerConfig()
+		if checkpointPath != "" {
+			cpConfig.FilePath = checkpointPath
+		}
+		if checkpointInterval > 0 {
+			cpConfig.Interval = checkpointInterval
+		}
+		cpManager = checkpoint.NewManager(cpConfig)
+		cpManager.Initialize(uuid.New().String(), inputFile, string(inputType), getTarget(endpoints), nil)
+	}
+	cpManager.StartAutoSave()
+	defer cpManager.StopAutoSave()
 
 	// Check for dry-run mode
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
@@ -489,6 +757,61 @@ func runScan(cmd *cobra.Command, args []string) error {
 	engine := fuzzer.NewEngine(*config)
 	responseAnalyzer := detector.NewAnalyzer()
 
+	// Setup WAF detector
+	detectWAF, _ := cmd.Flags().GetBool("detect-waf")
+	var wafDetector *waf.WAFDetector
+	if detectWAF {
+		wafDetector = waf.NewWAFDetector(provider, config.WAF.Threshold, config.WAF.Bypass)
+		printInfo("WAF detection enabled (threshold: %d consecutive blocks)", config.WAF.Threshold)
+	}
+
+	// Setup differential analysis
+	diffAuthArgs, _ := cmd.Flags().GetStringSlice("diff-auth")
+	diffAuthFile, _ := cmd.Flags().GetString("diff-auth-file")
+	var diffContexts []types.AuthContext
+
+	if len(diffAuthArgs) > 0 {
+		diffContexts = detector.ParseAuthContexts(diffAuthArgs)
+	} else if diffAuthFile != "" {
+		data, readErr := os.ReadFile(filepath.Clean(diffAuthFile))
+		if readErr != nil {
+			printWarning("Failed to read diff-auth-file: %v", readErr)
+		} else {
+			if yamlErr := yaml.Unmarshal(data, &diffContexts); yamlErr != nil {
+				printWarning("Failed to parse diff-auth-file: %v", yamlErr)
+			}
+		}
+	}
+
+	var diffAnalyzer *detector.DifferentialAnalyzer
+	var multiAuthExec *fuzzer.MultiAuthExecutor
+	if len(diffContexts) >= 2 {
+		diffAnalyzer = detector.NewDifferentialAnalyzer(diffContexts)
+		multiAuthExec = fuzzer.NewMultiAuthExecutor(engine, diffContexts)
+		printInfo("Differential analysis enabled with %d auth contexts", len(diffContexts))
+	}
+
+	// Setup stateful session tracking
+	enableStateful, _ := cmd.Flags().GetBool("stateful")
+	var stateTracker *fuzzer.StateTracker
+	var extractor *fuzzer.Extractor
+
+	if enableStateful {
+		stateTracker = fuzzer.NewStateTracker()
+		extractor = fuzzer.NewExtractor(stateTracker, true) // autoExtract=true
+
+		extractFile, _ := cmd.Flags().GetString("extract-file")
+		if extractFile != "" {
+			data, readErr := os.ReadFile(filepath.Clean(extractFile))
+			if readErr != nil {
+				printWarning("Failed to read extract-file: %v", readErr)
+			} else if yamlErr := extractor.LoadRulesFromYAML(data); yamlErr != nil {
+				printWarning("Failed to parse extract-file: %v", yamlErr)
+			}
+		}
+		printInfo("Stateful session tracking enabled (auto-extraction: on)")
+	}
+
 	// Initialize scan stats
 	scanStats := types.NewScanStats()
 
@@ -507,57 +830,335 @@ func runScan(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Pre-extract state from baseline responses
+	if stateTracker != nil {
+		for _, ep := range endpoints {
+			baseline, _ := engine.GetBaseline(ctx, ep)
+			if baseline != nil {
+				extractor.ExtractFromResponse(baseline, ep.Method+":"+ep.Path)
+			}
+		}
+		vars := stateTracker.GetAllVariables()
+		if len(vars) > 0 {
+			printInfo("Extracted %d state variables from baselines", len(vars))
+		}
+	}
+
+	// Substitute state variables into payloads
+	if stateTracker != nil {
+		for i := range fuzzRequests {
+			fuzzRequests[i].Payload.Value = stateTracker.SubstituteVariables(fuzzRequests[i].Payload.Value)
+			if fuzzRequests[i].Endpoint.Path != "" {
+				fuzzRequests[i].Endpoint.Path = stateTracker.SubstituteVariables(fuzzRequests[i].Endpoint.Path)
+			}
+		}
+	}
+
+	// Separate WebSocket requests from HTTP requests
+	httpRequests, wsRequests := fuzzer.FilterWebSocketRequests(fuzzRequests)
+	if len(wsRequests) > 0 {
+		printInfo("Separated %d WebSocket requests from %d HTTP requests", len(wsRequests), len(httpRequests))
+		fuzzRequests = httpRequests
+	}
+
+	// Check if BOLA attacks are enabled without diff-auth
+	if len(diffContexts) < 2 {
+		hasBOLA := false
+		for _, ep := range endpoints {
+			for _, a := range ep.SuggestedAttacks {
+				if a.Type == types.AttackBOLA || a.Type == types.AttackIDOR {
+					hasBOLA = true
+					break
+				}
+			}
+			if hasBOLA {
+				break
+			}
+		}
+		if hasBOLA {
+			printWarning("BOLA/IDOR attacks enabled without --diff-auth. For best results, provide two auth contexts: --diff-auth 'user1=Bearer token1' --diff-auth 'user2=Bearer token2'")
+		}
+	}
+
 	// Run fuzzing
 	printInfo("Starting scan...")
 	startTime := time.Now()
 
 	var findings []types.Finding
 	findings = append(findings, passiveFindings...)
-	results := engine.Fuzz(ctx, fuzzRequests)
+	if resumePath != "" && cpManager != nil {
+		findings = append(findings, restoredFindings...)
+	}
 
-	// Process results
 	processedCount := 0
-	for result := range results {
-		processedCount++
+	verbose, _ := cmd.Flags().GetBool("verbose")
 
-		// Log request if logger is enabled
-		if err := requestLogger.Log(result); err != nil {
-			printWarning("Failed to log request: %v", err)
+	if multiAuthExec != nil {
+		// Differential mode: fuzz with all auth contexts
+		diffEndpoints := make(map[string]struct{})
+		multiResults := multiAuthExec.FuzzWithContexts(ctx, fuzzRequests)
+		for result := range multiResults {
+			processedCount++
+			endpointKey := result.Endpoint.Method + ":" + result.Endpoint.Path
+			diffEndpoints[endpointKey] = struct{}{}
+
+			for ctxName, fuzzResult := range result.Results {
+				// Update stats
+				respSize := int64(0)
+				if fuzzResult.Response != nil {
+					respSize = fuzzResult.Response.ContentLength
+				}
+				scanStats.Update(fuzzResult.Duration, fuzzResult.Error == nil, respSize)
+
+				// Standard analysis per context
+				var baseline *types.HTTPResponse
+				if fuzzResult.Error == nil {
+					baseline, _ = engine.GetBaseline(ctx, fuzzResult.Request.Endpoint)
+				}
+				resultFindings := responseAnalyzer.AnalyzeResult(fuzzResult, baseline)
+				findings = append(findings, resultFindings...)
+
+				// Store response for differential comparison
+				if fuzzResult.Response != nil {
+					diffAnalyzer.StoreResponse(endpointKey, ctxName, fuzzResult.Response)
+				}
+
+				// Extract state from responses
+				if stateTracker != nil && fuzzResult.Response != nil {
+					extractor.ExtractFromResponse(fuzzResult.Response, endpointKey)
+				}
+
+				// Print findings as they're discovered
+				for _, f := range resultFindings {
+					printFindingWithVerbose(f, verbose)
+				}
+			}
+
+			// Print progress
+			if processedCount%50 == 0 {
+				printProgress(processedCount, len(fuzzRequests))
+			}
 		}
 
-		// Update stats
-		respSize := int64(0)
-		if result.Response != nil {
-			respSize = result.Response.ContentLength
+		// Run differential analysis across all endpoints
+		printInfo("Analyzing differential responses...")
+		for endpointKey := range diffEndpoints {
+			parts := strings.SplitN(endpointKey, ":", 2)
+			method, path := parts[0], parts[1]
+			anomalies := diffAnalyzer.AnalyzeEndpoint(endpointKey)
+			for _, anomaly := range anomalies {
+				findings = append(findings, anomaly.ToFinding(path, method))
+			}
 		}
-		scanStats.Update(result.Duration, result.Error == nil, respSize)
+	} else {
+		// Standard mode
+		results := engine.Fuzz(ctx, fuzzRequests)
 
-		// Get baseline if needed
-		var baseline *types.HTTPResponse
-		if result.Error == nil {
-			baseline, _ = engine.GetBaseline(ctx, result.Request.Endpoint)
+		for result := range results {
+			processedCount++
+
+			// Log request if logger is enabled
+			if err := requestLogger.Log(result); err != nil {
+				printWarning("Failed to log request: %v", err)
+			}
+
+			// Update stats
+			respSize := int64(0)
+			if result.Response != nil {
+				respSize = result.Response.ContentLength
+			}
+			scanStats.Update(result.Duration, result.Error == nil, respSize)
+
+			// Get baseline if needed
+			var baseline *types.HTTPResponse
+			if result.Error == nil {
+				baseline, _ = engine.GetBaseline(ctx, result.Request.Endpoint)
+			}
+
+			// Analyze result
+			resultFindings := responseAnalyzer.AnalyzeResult(result, baseline)
+
+			// Apply plugin matchers
+			if pluginRegistry != nil && result.Response != nil && result.ActualRequest != nil {
+				for _, matcher := range pluginRegistry.GetResponseMatchers() {
+					matchResult, matchErr := matcher.Match(ctx, result.Response, result.ActualRequest)
+					if matchErr == nil && matchResult != nil && matchResult.Matched {
+						resultFindings = append(resultFindings, types.Finding{
+							ID:          uuid.New().String(),
+							Type:        "plugin_match",
+							Severity:    matchResult.Severity,
+							Confidence:  matchResult.Confidence,
+							Title:       matchResult.Title,
+							Description: matchResult.Description,
+							CWE:         matchResult.CWE,
+							Endpoint:    result.Request.Endpoint.Path,
+							Method:      result.Request.Endpoint.Method,
+						})
+					}
+				}
+			}
+
+			findings = append(findings, resultFindings...)
+
+			// WAF detection
+			if wafDetector != nil && result.Response != nil {
+				detected := wafDetector.AnalyzeResponse(result.Response, result.Request.Endpoint.Path, result.Request.Payload.Value)
+				if detected != nil && wafDetector.ShouldTriggerBypass() {
+					printWarning("WAF detected: %s (confidence: %.0f%%)", detected.Name, detected.Confidence*100)
+					wafDetector.ResetBlockCount()
+				}
+			}
+
+			// Extract state from responses
+			if stateTracker != nil && result.Response != nil {
+				endpointKey := result.Request.Endpoint.Method + ":" + result.Request.Endpoint.Path
+				extractor.ExtractFromResponse(result.Response, endpointKey)
+			}
+
+			// Record checkpoint progress
+			if cpManager != nil {
+				fingerprint := result.Request.Endpoint.Method + ":" + result.Request.Endpoint.Path + ":" + result.Request.Payload.Value
+				cpManager.RecordCompletion(fingerprint)
+				for _, f := range resultFindings {
+					cpManager.AddFinding(f)
+				}
+			}
+
+			// Print progress
+			if processedCount%100 == 0 {
+				printProgress(processedCount, len(fuzzRequests))
+			}
+
+			// Print findings as they're discovered
+			for _, f := range resultFindings {
+				printFindingWithVerbose(f, verbose)
+			}
 		}
+	}
 
-		// Analyze result
-		resultFindings := responseAnalyzer.AnalyzeResult(result, baseline)
-		findings = append(findings, resultFindings...)
+	// Run WebSocket fuzzer for WS-tagged requests
+	if len(wsRequests) > 0 {
+		printInfo("Fuzzing %d WebSocket endpoints...", len(wsRequests))
+		wsFuzzer := fuzzer.NewWebSocketFuzzer(*config)
+		wsResults := wsFuzzer.Fuzz(ctx, wsRequests)
+		for result := range wsResults {
+			processedCount++
 
-		// Print progress
-		if processedCount%100 == 0 {
-			printProgress(processedCount, len(fuzzRequests))
-		}
+			// Update stats
+			respSize := int64(0)
+			if result.Response != nil {
+				respSize = result.Response.ContentLength
+			}
+			scanStats.Update(result.Duration, result.Error == nil, respSize)
 
-		// Print findings as they're discovered
-		verbose, _ := cmd.Flags().GetBool("verbose")
-		for _, f := range resultFindings {
-			printFindingWithVerbose(f, verbose)
+			// Analyze result
+			var baseline *types.HTTPResponse
+			resultFindings := responseAnalyzer.AnalyzeResult(result, baseline)
+			findings = append(findings, resultFindings...)
+
+			for _, f := range resultFindings {
+				printFindingWithVerbose(f, verbose)
+			}
 		}
 	}
 
 	endTime := time.Now()
 
+	// Collect out-of-band callback results
+	if callbackServer != nil {
+		printInfo("Collecting out-of-band callback results...")
+		time.Sleep(config.Callback.Timeout)
+		for _, cb := range callbackServer.GetReceivedCallbacks() {
+			findings = append(findings, cb.ToFinding())
+		}
+	}
+
+	// Execute attack chains
+	enableChains, _ := cmd.Flags().GetBool("attack-chains")
+	if enableChains && provider != nil {
+		printInfo("Analyzing endpoint relationships for attack chains...")
+		chainAnalyzer := chains.NewChainAnalyzer(provider)
+		discoveredChains, chainErr := chainAnalyzer.AnalyzeEndpoints(ctx, endpoints)
+		if chainErr != nil {
+			printWarning("Chain analysis failed: %v", chainErr)
+		} else if len(discoveredChains) > 0 {
+			printInfo("Discovered %d attack chains, executing...", len(discoveredChains))
+			executor := chains.NewExecutor(engine, chains.ExecutorConfig{
+				MaxDepth: 5,
+				Timeout:  5 * time.Minute,
+			})
+			chainResults := executor.ExecuteAll(ctx, discoveredChains)
+			for _, cr := range chainResults {
+				findings = append(findings, cr.Findings...)
+			}
+		}
+	}
+
 	// Finalize stats
 	scanStats.Finalize(endTime.Sub(startTime))
+
+	// Apply combined filtering (noise, confidence, deduplication)
+	combinedFilter := detector.NewCombinedFilter(config.Filter)
+	findings = combinedFilter.Filter(findings)
+
+	// LLM-powered verification
+	verifyEnabled, _ := cmd.Flags().GetBool("verify")
+	if verifyEnabled && provider != nil {
+		printInfo("Verifying findings with LLM analysis...")
+		llmVerifier := verify.NewLLMVerifier(provider, config.Verify, engine, responseAnalyzer)
+		verifiedFindings, followUpFindings, verifyErr := llmVerifier.VerifyFindings(ctx, findings)
+		if verifyErr != nil {
+			printWarning("LLM verification encountered errors: %v", verifyErr)
+		}
+		findings = verifiedFindings
+		if len(followUpFindings) > 0 {
+			printInfo("LLM verification discovered %d additional findings", len(followUpFindings))
+			followUpFindings = combinedFilter.Filter(followUpFindings)
+			findings = append(findings, followUpFindings...)
+		}
+
+		// Multi-pass confirmation loop
+		verifyPasses, _ := cmd.Flags().GetInt("verify-passes")
+		if verifyPasses > 5 {
+			printWarning("--verify-passes capped at 5 (requested %d)", verifyPasses)
+			verifyPasses = 5
+		}
+		if verifyPasses > 1 {
+			printInfo("Running %d confirmation passes...", verifyPasses-1)
+			confirmedFindings, confirmErr := llmVerifier.ConfirmFindings(ctx, findings, verifyPasses)
+			if confirmErr != nil {
+				printWarning("Confirmation pass errors: %v", confirmErr)
+			} else {
+				findings = confirmedFindings
+			}
+		}
+	} else if verifyEnabled && provider == nil {
+		printWarning("--verify requires --provider for LLM verification; falling back to HTTP verification")
+		httpVerifier := verify.NewVerifier(verify.DefaultVerifyConfig())
+		results := httpVerifier.VerifyAll(ctx, findings)
+		findings = verify.FilterVerified(results)
+	}
+
+	// Warn if --verify-passes set without --verify
+	if !verifyEnabled {
+		if vp, _ := cmd.Flags().GetInt("verify-passes"); vp > 1 {
+			printWarning("--verify-passes has no effect without --verify flag")
+		}
+	}
+
+	// Enrich findings with container context if specified
+	importContainerFile, _ := cmd.Flags().GetString("import-container-context")
+	if importContainerFile != "" {
+		importContainerFile = filepath.Clean(importContainerFile)
+		cepheusImport, cephErr := importer.LoadCepheusFindings(importContainerFile)
+		if cephErr != nil {
+			printWarning("Failed to load Cepheus container context: %v", cephErr)
+		} else {
+			findings = importer.EnrichFindingsWithContainerContext(cepheusImport, findings)
+			printInfo("Enriched %d findings with container context from Cepheus (%d containers, %d escape paths)",
+				len(findings), len(cepheusImport.Containers), len(cepheusImport.EscapePaths))
+		}
+	}
 
 	// Build scan result
 	scanResult := &types.ScanResult{
@@ -594,6 +1195,26 @@ func runScan(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Export findings in Vinculum correlation format
+	vinculumFile, _ := cmd.Flags().GetString("export-vinculum")
+	if vinculumFile != "" {
+		if err := reporter.ExportVinculum(scanResult, vinculumFile); err != nil {
+			printWarning("Failed to export Vinculum findings: %v", err)
+		} else {
+			printInfo("Vinculum correlation findings exported to: %s", vinculumFile)
+		}
+	}
+
+	// Export findings with attack path context for Ariadne
+	ariadneFile, _ := cmd.Flags().GetString("export-ariadne")
+	if ariadneFile != "" {
+		if err := reporter.ExportAriadne(scanResult, ariadneFile); err != nil {
+			printWarning("Failed to export Ariadne attack paths: %v", err)
+		} else {
+			printInfo("Ariadne attack path findings exported to: %s", ariadneFile)
+		}
+	}
+
 	// Generate report
 	outputFile, _ := cmd.Flags().GetString("output")
 	outputFormat, _ := cmd.Flags().GetString("format")
@@ -601,7 +1222,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 	// Handle text format specially - print to stdout if no output file specified
 	if (outputFormat == "text" || outputFormat == "txt") && outputFile == "" {
-		rep, err := reporter.NewReporterWithColorControl(outputFormat, reporter.DefaultOptions(), noColor)
+		rep, err := reporter.NewReporterWithColorControl(outputFormat, reporter.ReportOptions{IncludeRaw: true, IncludeConfig: true, Version: version}, noColor)
 		if err != nil {
 			return fmt.Errorf("failed to create reporter: %w", err)
 		}
@@ -616,7 +1237,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 		outputFile = fmt.Sprintf("indago-report-%s", time.Now().Format("20060102-150405"))
 	}
 
-	rep, err := reporter.NewReporterWithColorControl(outputFormat, reporter.DefaultOptions(), noColor)
+	rep, err := reporter.NewReporterWithColorControl(outputFormat, reporter.ReportOptions{IncludeRaw: true, IncludeConfig: true, Version: version}, noColor)
 	if err != nil {
 		return fmt.Errorf("failed to create reporter: %w", err)
 	}
@@ -946,10 +1567,98 @@ func runDryRun(requests []payloads.FuzzRequest) error {
 	return nil
 }
 
+func mergeEndpoints(existing, inferred []types.Endpoint) []types.Endpoint {
+	seen := make(map[string]bool)
+	for _, ep := range existing {
+		seen[ep.Method+":"+ep.Path] = true
+	}
+	merged := make([]types.Endpoint, len(existing))
+	copy(merged, existing)
+	for _, ep := range inferred {
+		key := ep.Method + ":" + ep.Path
+		if !seen[key] {
+			merged = append(merged, ep)
+			seen[key] = true
+		}
+	}
+	return merged
+}
+
+func rulesToFuzzRequests(testCases []rules.RuleTestCase, endpoints []types.Endpoint) []payloads.FuzzRequest {
+	endpointMap := make(map[string]types.Endpoint)
+	for _, ep := range endpoints {
+		endpointMap[ep.Method+":"+ep.Path] = ep
+	}
+
+	var reqs []payloads.FuzzRequest
+	for _, tc := range testCases {
+		// Build fuzz requests from the action step
+		step := tc.ActionStep
+		key := step.Method + ":" + step.Endpoint
+		ep, found := endpointMap[key]
+		if !found {
+			ep = types.Endpoint{
+				Method: step.Method,
+				Path:   step.Endpoint,
+			}
+		}
+
+		payload := payloads.Payload{
+			Type:        "business_rule",
+			Category:    "business_rule",
+			Description: tc.Description,
+			Metadata: map[string]string{
+				"source":  "business-rule",
+				"rule_id": tc.RuleID,
+			},
+		}
+
+		// Use query params or body as payload value
+		if len(step.Body) > 0 {
+			bodyBytes, _ := json.Marshal(step.Body)
+			payload.Value = string(bodyBytes)
+		} else if len(step.QueryParams) > 0 {
+			var parts []string
+			for k, v := range step.QueryParams {
+				parts = append(parts, k+"="+v)
+			}
+			payload.Value = strings.Join(parts, "&")
+		}
+
+		reqs = append(reqs, payloads.FuzzRequest{
+			Endpoint: ep,
+			Payload:  payload,
+			Position: "body",
+		})
+	}
+	return reqs
+}
+
 func getConfigDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "."
 	}
 	return filepath.Join(home, ".config", "indago")
+}
+
+func sanitizePluginPath(path string) (string, error) {
+	// Check original path for traversal before cleaning resolves it away
+	if strings.Contains(path, "..") {
+		return "", fmt.Errorf("plugin path %q contains directory traversal", path)
+	}
+	cleaned := filepath.Clean(path)
+	abs, err := filepath.Abs(cleaned)
+	if err != nil {
+		return "", fmt.Errorf("plugin path %q: %w", path, err)
+	}
+	// Verify the resolved path is within the current working directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("cannot determine working directory: %w", err)
+	}
+	if !strings.HasPrefix(abs, cwd+string(filepath.Separator)) && abs != cwd {
+		return "", fmt.Errorf("plugin path %q resolves outside working directory", path)
+	}
+	return abs, nil
 }

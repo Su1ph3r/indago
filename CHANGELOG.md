@@ -5,12 +5,70 @@ All notable changes to Indago will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-02-18
+
+### Added
+
+#### New Payload Generators
+- **XXE (XML External Entity)**: File disclosure, SSRF via DTD, parameter entity injection, out-of-band exfiltration
+- **HTTP Request Smuggling**: CL.TE, TE.CL, TE.TE smuggling payloads with header manipulation
+- **Deserialization Attacks**: Java, Python, PHP, Ruby, .NET deserialization payloads
+- **Cache Poisoning**: Host header, X-Forwarded-Host, unkeyed header, parameter cloaking payloads
+- **WebSocket Security**: Authentication bypass, origin validation, message injection, cross-site WebSocket hijacking
+
+#### Detection Improvements
+- **Graduated confidence scoring**: Detectors now assign HIGH/MEDIUM/LOW confidence based on evidence strength (e.g., multiple SQL error patterns = high, single 500 error = low)
+- **Security header detection**: Passive detection for missing HSTS, X-Content-Type-Options, X-Frame-Options, CSP, and X-XSS-Protection headers
+- **Enumeration detection**: User enumeration via differential response content analysis
+- **Enhanced BOLA detection**: Support for 204 No Content responses, PUT/PATCH/DELETE methods
+- **Enhanced JWT detection**: Expanded weak secret testing (~80 common secrets), signature bypass detection
+- **Baseline suppression**: All detectors (errors, leaks, anomalies) now compare against baseline responses to suppress pre-existing patterns
+- **Injection indicators return matched data**: SQL, NoSQL, command, path traversal, LDAP, and XPath detectors now return the specific text that triggered detection
+- **XSS detection refinement**: JSON API responses excluded (reflection is expected behavior), HTML-encoded output no longer flagged as vulnerable
+- **Credit card validation**: Luhn algorithm check and field context validation to eliminate false positives on numeric IDs
+
+#### Ecosystem Integration
+- **Vinculum**: `--export-vinculum` exports findings in correlation format for cross-tool deduplication
+- **Ariadne**: `--export-ariadne` exports findings with attack path context for graph analysis
+- **BypassBurrito**: `--import-burrito` imports WAF bypass findings and merges with scan results
+- **Cepheus**: `--import-container-context` enriches findings with container escape path context
+- **Nubicustos**: `--import-cloud-findings` imports cloud security audit findings
+
+#### LLM Verification
+- **`--verify` with LLM provider**: Multi-pass LLM-powered finding verification with follow-up discovery
+- **`--verify-passes N`**: Configurable confirmation passes (up to 5) for high-confidence results
+- **HTTP fallback**: `--verify` without `--provider` uses HTTP-based re-testing
+
+#### Reporter
+- **Rich text output**: Evidence details, matched data, and baseline comparisons in terminal output
+- **Version display**: Report headers now show the actual Indago version
+- **Payload confirmation counts**: Deduplicated findings annotated with "[Confirmed by N payloads]"
+
+### Improved
+- **Confidence filter respects detector assignments**: `calculateConfidence` now starts from the detector's assigned confidence level (high=0.8, medium=0.5, low=0.3) instead of a hardcoded 0.5
+- **Evidence-based deduplication**: Dedup selects the finding with richest evidence (severity > confidence > evidence completeness)
+- **MatchedData populated in all detectors**: Every detection rule now populates `Evidence.MatchedData` for traceable findings
+
+### Fixed
+- **Race condition in fuzzer Stats**: Completion goroutine now holds mutex when writing `EndTime` and `RequestsPerSec`
+- **Plugin path sanitization**: `sanitizePluginPath` now verifies the resolved path is within the working directory (was only checking for `..` traversal)
+- **Sensitive data redaction**: Short secrets (<=12 chars) now properly masked; secrets <=4 chars fully redacted as `***`
+- **Email PII in findings**: Bulk email exposure evidence now redacts addresses (e.g., `us***@example.com`)
+- **Removed debug printf**: Removed leftover `fmt.Printf("[DEBUG]...")` from Anthropic provider that leaked diagnostics to stdout
+- **Reverted aggressive rate-limit defaults**: Defaults restored to 10 RPS / 10 concurrency (were accidentally raised to 100/50)
+- **JWT relevance matching**: Removed overly broad `/api/` and `/users/` from `authPaths` that caused JWT testing on nearly every endpoint
+
+### Security
+- Plugin path sandboxing enforced (working directory containment check)
+- Improved redaction prevents PII leakage in SARIF/CI output
+- Conservative rate-limit defaults prevent accidental DoS on targets
+
 ## [1.3.1] - 2026-02-12
 
 ### Improved
-- **Report findings sorted by severity**: All output formats (HTML, JSON, SARIF, Burp XML) now sort findings from Critical → High → Medium → Low → Info for easier triage
+- **Report findings sorted by severity**: All output formats (HTML, JSON, SARIF, Burp XML) now sort findings from Critical to High to Medium to Low to Info for easier triage
 - **Actual HTTP request/response in evidence**: Reports now show the real HTTP request that was sent (including payload-injected URL, session/auth headers, request body) instead of reconstructed endpoint metadata
-- **Full evidence bodies**: Removed artificial truncation of request and response bodies in HTML, JSON, and Markdown reports — full evidence is now preserved for accurate analysis
+- **Full evidence bodies**: Removed artificial truncation of request and response bodies in HTML, JSON, and Markdown reports -- full evidence is now preserved for accurate analysis
 
 ## [1.2.1] - 2026-02-12
 
@@ -185,6 +243,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Session management and authentication support
 - Proxy support for debugging
 
+[1.4.0]: https://github.com/Su1ph3r/indago/compare/v1.3.1...v1.4.0
+[1.3.1]: https://github.com/Su1ph3r/indago/compare/v1.2.1...v1.3.1
+[1.2.1]: https://github.com/Su1ph3r/indago/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/Su1ph3r/indago/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Su1ph3r/indago/compare/v1.0.3...v1.1.0
 [1.0.3]: https://github.com/Su1ph3r/indago/compare/v1.0.2...v1.0.3

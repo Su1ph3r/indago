@@ -54,6 +54,12 @@ type Config struct {
 	// Checkpoint settings
 	Checkpoint CheckpointSettings `yaml:"checkpoint" mapstructure:"checkpoint"`
 
+	// Verification settings
+	Verify VerificationSettings `yaml:"verify" mapstructure:"verify"`
+
+	// Ecosystem integration settings
+	Ecosystem EcosystemSettings `yaml:"ecosystem" mapstructure:"ecosystem"`
+
 	// User-provided context about the API being tested
 	UserContext string `yaml:"user_context" mapstructure:"user_context"`
 }
@@ -109,8 +115,42 @@ type AttackSettings struct {
 	LLMConcurrency     int      `yaml:"llm_concurrency" mapstructure:"llm_concurrency"`   // Concurrent LLM calls for payload generation
 
 	// Category-specific settings
-	IDOR      IDORSettings      `yaml:"idor" mapstructure:"idor"`
-	Injection InjectionSettings `yaml:"injection" mapstructure:"injection"`
+	IDOR            IDORSettings            `yaml:"idor" mapstructure:"idor"`
+	Injection       InjectionSettings       `yaml:"injection" mapstructure:"injection"`
+	XXE             XXESettings             `yaml:"xxe" mapstructure:"xxe"`
+	Smuggling       SmugglingSettings       `yaml:"smuggling" mapstructure:"smuggling"`
+	Deserialization DeserializationSettings `yaml:"deserialization" mapstructure:"deserialization"`
+	CachePoisoning  CachePoisoningSettings  `yaml:"cache_poisoning" mapstructure:"cache_poisoning"`
+	WebSocket       WebSocketSettings       `yaml:"websocket" mapstructure:"websocket"`
+}
+
+// XXESettings holds XXE attack configuration
+type XXESettings struct{}
+
+// SmugglingSettings holds request smuggling configuration
+type SmugglingSettings struct {
+	Timeout time.Duration `yaml:"timeout" mapstructure:"timeout"`
+}
+
+// DeserializationSettings holds deserialization attack configuration
+type DeserializationSettings struct{}
+
+// CachePoisoningSettings holds cache poisoning configuration
+type CachePoisoningSettings struct {
+	VerifyPoisoning bool `yaml:"verify_poisoning" mapstructure:"verify_poisoning"`
+}
+
+// WebSocketSettings holds WebSocket testing configuration
+type WebSocketSettings struct {
+	HandshakeTimeout time.Duration `yaml:"handshake_timeout" mapstructure:"handshake_timeout"`
+	ReadTimeout      time.Duration `yaml:"read_timeout" mapstructure:"read_timeout"`
+}
+
+// EcosystemSettings holds cross-tool integration configuration
+type EcosystemSettings struct {
+	ImportBypasses string `yaml:"import_bypasses" mapstructure:"import_bypasses"`
+	ExportVinculum string `yaml:"export_vinculum" mapstructure:"export_vinculum"`
+	ExportAriadne  string `yaml:"export_ariadne" mapstructure:"export_ariadne"`
 }
 
 // IDORSettings holds IDOR-specific configuration
@@ -219,6 +259,19 @@ type PluginSettings struct {
 	MatcherFiles []string `yaml:"matcher_files" mapstructure:"matcher_files"` // Custom matcher files
 }
 
+// VerificationSettings holds LLM verification configuration
+type VerificationSettings struct {
+	Enabled             bool `yaml:"enabled" mapstructure:"enabled"`
+	MaxBodyLength       int  `yaml:"max_body_length" mapstructure:"max_body_length"`
+	MaxRequestBody      int  `yaml:"max_request_body" mapstructure:"max_request_body"`
+	MaxFindingsPerBatch int  `yaml:"max_findings_per_batch" mapstructure:"max_findings_per_batch"`
+	FuzzFollowUps       bool `yaml:"fuzz_follow_ups" mapstructure:"fuzz_follow_ups"`
+	MaxFollowUpPayloads int  `yaml:"max_follow_up_payloads" mapstructure:"max_follow_up_payloads"`
+	Concurrency         int  `yaml:"concurrency" mapstructure:"concurrency"`
+	MaxVerifyPasses     int  `yaml:"max_verify_passes" mapstructure:"max_verify_passes"`
+	MaxConfirmPayloads  int  `yaml:"max_confirm_payloads" mapstructure:"max_confirm_payloads"`
+}
+
 // CheckpointSettings holds checkpoint configuration
 type CheckpointSettings struct {
 	Enabled  bool          `yaml:"enabled" mapstructure:"enabled"`   // Enable checkpointing
@@ -283,6 +336,16 @@ func DefaultConfig() *Config {
 				SSTI:       true,
 				BlindDelay: 5,
 			},
+			Smuggling: SmugglingSettings{
+				Timeout: 10 * time.Second,
+			},
+			CachePoisoning: CachePoisoningSettings{
+				VerifyPoisoning: false,
+			},
+			WebSocket: WebSocketSettings{
+				HandshakeTimeout: 10 * time.Second,
+				ReadTimeout:      5 * time.Second,
+			},
 		},
 		Chains: ChainSettings{
 			Enabled:  false,
@@ -331,6 +394,17 @@ func DefaultConfig() *Config {
 			Enabled:  true,
 			Interval: 30 * time.Second,
 			File:     ".indago-checkpoint.json",
+		},
+		Verify: VerificationSettings{
+			Enabled:             false,
+			MaxBodyLength:       2000,
+			MaxRequestBody:      500,
+			MaxFindingsPerBatch: 5,
+			FuzzFollowUps:       false,
+			MaxFollowUpPayloads: 3,
+			Concurrency:         8,
+			MaxVerifyPasses:     1,
+			MaxConfirmPayloads:  5,
 		},
 	}
 }

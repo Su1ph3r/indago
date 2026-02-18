@@ -79,11 +79,25 @@ func NewGenerator(provider llm.Provider, config types.AttackSettings, userContex
 	g.generators[types.AttackOpenRedirect] = NewOpenRedirectGenerator()
 	g.generators[types.AttackContentTypeConfusion] = NewContentTypeConfusionGenerator()
 
+	// New Phase 1 generators
+	g.generators[types.AttackXXE] = NewXXEGenerator()
+	g.generators[types.AttackSmuggling] = NewSmugglingGenerator()
+	g.generators[types.AttackDeserialization] = NewDeserializationGenerator()
+	g.generators[types.AttackCachePoisoning] = NewCachePoisoningGenerator()
+	g.generators[types.AttackWebSocket] = NewWebSocketGenerator()
+
 	// Register existing generators that were previously unwired
 	g.generators["graphql"] = NewGraphQLGenerator(GraphQLSettings{})
 	g.generators["blind"] = NewBlindGenerator(BlindSettings{})
 
 	return g
+}
+
+// SetBlindCallbacks passes callback URLs to the blind payload generator.
+func (g *Generator) SetBlindCallbacks(httpCallback, dnsCallback string) {
+	if bg, ok := g.generators["blind"].(*BlindGenerator); ok {
+		bg.SetCallbacks(httpCallback, dnsCallback)
+	}
 }
 
 // GenerateForEndpoint generates all applicable payloads for an endpoint
@@ -93,20 +107,52 @@ func (g *Generator) GenerateForEndpoint(ctx context.Context, endpoint types.Endp
 	// Determine which attack types to use
 	attackTypes := g.getAttackTypes(endpoint)
 
+	// Track whether JWT payloads have already been generated for this endpoint
+	// to avoid duplicates when multiple parameters match isJWTRelevant.
+	jwtGenerated := false
+
 	// Generate payloads for each parameter
 	for i := range endpoint.Parameters {
 		param := &endpoint.Parameters[i]
 		for _, attackType := range attackTypes {
+			// Skip JWT generation if we already produced JWT payloads for this endpoint
+			if attackType == types.AttackJWT && jwtGenerated {
+				continue
+			}
+
 			if gen, ok := g.generators[attackType]; ok {
 				payloads := gen.Generate(endpoint, param)
+
 				for _, payload := range payloads {
+					position := param.In
+					fuzzParam := param
+
+					// JWT payloads always target the Authorization header
+					if payload.Type == types.AttackJWT {
+						position = "header"
+						if authParam := findAuthParam(endpoint); authParam != nil {
+							fuzzParam = authParam
+						} else {
+							// Create a synthetic Authorization header parameter
+							fuzzParam = &types.Parameter{
+								Name: "Authorization",
+								In:   "header",
+								Type: "string",
+							}
+						}
+					}
+
 					requests = append(requests, FuzzRequest{
 						Endpoint: endpoint,
-						Param:    param,
+						Param:    fuzzParam,
 						Payload:  payload,
-						Original: g.getOriginalValue(param),
-						Position: param.In,
+						Original: g.getOriginalValue(fuzzParam),
+						Position: position,
 					})
+				}
+
+				if attackType == types.AttackJWT && len(payloads) > 0 {
+					jwtGenerated = true
 				}
 			}
 		}
@@ -171,6 +217,22 @@ func (g *Generator) GenerateForEndpoint(ctx context.Context, endpoint types.Endp
 		}
 	}
 
+	// For endpoints with no parameters and no body fields, no payloads are
+	// generated above. Emit a single probe request so the response analysis
+	// pipeline (leak detection, anomaly detection, etc.) still runs on the
+	// endpoint's baseline response.
+	if len(requests) == 0 {
+		requests = append(requests, FuzzRequest{
+			Endpoint: endpoint,
+			Payload: Payload{
+				Type:        "probe",
+				Value:       "",
+				Category:    "baseline",
+				Description: "Baseline probe for parameterless endpoint",
+			},
+		})
+	}
+
 	// Limit payloads if configured
 	if g.config.MaxPayloadsPerType > 0 {
 		requests = g.limitPayloads(requests)
@@ -214,16 +276,27 @@ func (g *Generator) getAttackTypes(endpoint types.Endpoint) []string {
 	// Default attacks based on endpoint characteristics
 	allAttacks := []string{
 		types.AttackIDOR,
+		types.AttackBOLA,
 		types.AttackSQLi,
 		types.AttackXSS,
 		types.AttackAuthBypass,
 		types.AttackMethodTampering,
+		types.AttackXXE,
+		types.AttackSmuggling,
+		types.AttackWebSocket,
+		types.AttackJWT,
 	}
 
 	// Add based on method
 	if endpoint.Method == "POST" || endpoint.Method == "PUT" || endpoint.Method == "PATCH" {
 		allAttacks = append(allAttacks, types.AttackMassAssignment)
 		allAttacks = append(allAttacks, types.AttackContentTypeConfusion)
+		allAttacks = append(allAttacks, types.AttackDeserialization)
+	}
+
+	// Add cache poisoning for cacheable (GET) endpoints
+	if endpoint.Method == "GET" {
+		allAttacks = append(allAttacks, types.AttackCachePoisoning)
 	}
 
 	// Add open redirect if redirect-like params exist
@@ -289,7 +362,11 @@ func (g *Generator) limitPayloads(requests []FuzzRequest) []FuzzRequest {
 	var limited []FuzzRequest
 
 	for _, req := range requests {
-		key := req.Payload.Type + ":" + req.Param.Name
+		paramName := ""
+		if req.Param != nil {
+			paramName = req.Param.Name
+		}
+		key := req.Payload.Type + ":" + paramName
 		if counts[key] < g.config.MaxPayloadsPerType {
 			limited = append(limited, req)
 			counts[key]++
@@ -379,6 +456,18 @@ func fieldToParam(field *types.BodyField) *types.Parameter {
 		Description: field.Description,
 		Example:     field.Example,
 	}
+}
+
+// findAuthParam finds the Authorization header parameter in the endpoint's parameters.
+// Returns nil if no Authorization header parameter exists.
+func findAuthParam(ep types.Endpoint) *types.Parameter {
+	for i := range ep.Parameters {
+		if strings.EqualFold(ep.Parameters[i].Name, "Authorization") &&
+			strings.EqualFold(ep.Parameters[i].In, "header") {
+			return &ep.Parameters[i]
+		}
+	}
+	return nil
 }
 
 // uniqueStrings returns unique strings from a slice

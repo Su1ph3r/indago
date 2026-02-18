@@ -22,7 +22,32 @@ type Finding struct {
 	CWE         string    `json:"cwe,omitempty" yaml:"cwe,omitempty"`
 	CVSS        float64   `json:"cvss,omitempty" yaml:"cvss,omitempty"`
 	Timestamp   time.Time `json:"timestamp" yaml:"timestamp"`
-	Tags        []string  `json:"tags,omitempty" yaml:"tags,omitempty"`
+	Tags         []string          `json:"tags,omitempty" yaml:"tags,omitempty"`
+	Verification *VerificationMeta `json:"verification,omitempty" yaml:"verification,omitempty"`
+}
+
+// VerificationMeta contains LLM verification results for a finding
+type VerificationMeta struct {
+	Verified           bool                 `json:"verified" yaml:"verified"`
+	LLMConfidence      string               `json:"llm_confidence" yaml:"llm_confidence"`
+	OriginalConfidence string               `json:"original_confidence" yaml:"original_confidence"`
+	Exploitability     string               `json:"exploitability" yaml:"exploitability"`
+	Analysis           string               `json:"analysis" yaml:"analysis"`
+	SuggestedPayloads  []string             `json:"suggested_payloads,omitempty" yaml:"suggested_payloads,omitempty"`
+	RelatedIssues      []string             `json:"related_issues,omitempty" yaml:"related_issues,omitempty"`
+	ProviderName       string               `json:"provider_name" yaml:"provider_name"`
+	ModelName          string               `json:"model_name" yaml:"model_name"`
+	ConfirmationPasses []ConfirmationResult `json:"confirmation_passes,omitempty" yaml:"confirmation_passes,omitempty"`
+}
+
+// ConfirmationResult records the outcome of a single confirmation pass
+type ConfirmationResult struct {
+	PassNumber         int    `json:"pass_number"`
+	PayloadsExecuted   int    `json:"payloads_executed"`
+	ConfirmingFindings int    `json:"confirming_findings"`
+	FinalExploitability string `json:"final_exploitability"`
+	FinalConfidence    string `json:"final_confidence"`
+	CombinedAnalysis   string `json:"combined_analysis"`
 }
 
 // Evidence contains proof of the finding

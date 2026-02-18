@@ -82,7 +82,7 @@ func NewAnthropicProvider(config types.ProviderConfig) (*AnthropicProvider, erro
 
 	// Set default max tokens if not specified
 	if config.MaxTokens == 0 {
-		config.MaxTokens = 4096
+		config.MaxTokens = 8192
 	}
 
 	return &AnthropicProvider{
@@ -158,7 +158,8 @@ func (p *AnthropicProvider) AnalyzeWithSystem(ctx context.Context, system, promp
 	}
 
 	if len(anthropicResp.Content) == 0 {
-		return "", fmt.Errorf("%w: no content returned", ErrProviderError)
+		return "", fmt.Errorf("%w: no content returned (stop_reason=%s, input_tokens=%d)",
+			ErrProviderError, anthropicResp.StopReason, anthropicResp.Usage.InputTokens)
 	}
 
 	// Extract text from content blocks

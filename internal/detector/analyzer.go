@@ -12,19 +12,23 @@ import (
 
 // Analyzer analyzes fuzzing results to detect vulnerabilities
 type Analyzer struct {
-	anomalyDetector  *AnomalyDetector
-	errorDetector    *ErrorPatternDetector
-	leakDetector     *DataLeakDetector
-	baselineCache    map[string]*types.HTTPResponse
+	anomalyDetector      *AnomalyDetector
+	errorDetector        *ErrorPatternDetector
+	leakDetector         *DataLeakDetector
+	enumerationDetector  *EnumerationDetector
+	headerDetector       *SecurityHeaderDetector
+	baselineCache        map[string]*types.HTTPResponse
 }
 
 // NewAnalyzer creates a new response analyzer
 func NewAnalyzer() *Analyzer {
 	return &Analyzer{
-		anomalyDetector:  NewAnomalyDetector(),
-		errorDetector:    NewErrorPatternDetector(),
-		leakDetector:     NewDataLeakDetector(),
-		baselineCache:    make(map[string]*types.HTTPResponse),
+		anomalyDetector:     NewAnomalyDetector(),
+		errorDetector:       NewErrorPatternDetector(),
+		leakDetector:        NewDataLeakDetector(),
+		enumerationDetector: NewEnumerationDetector(),
+		headerDetector:      NewSecurityHeaderDetector(),
+		baselineCache:       make(map[string]*types.HTTPResponse),
 	}
 }
 
@@ -47,10 +51,18 @@ func (a *Analyzer) AnalyzeResult(result *fuzzer.FuzzResult, baseline *types.HTTP
 		baseline = a.baselineCache[endpointKey]
 	}
 
-	// Run all detectors
+	// Run all detectors (pass baseline to suppress pre-existing patterns)
 	findings = append(findings, a.anomalyDetector.Detect(result, baseline)...)
-	findings = append(findings, a.errorDetector.Detect(resp, req)...)
-	findings = append(findings, a.leakDetector.Detect(resp, req)...)
+	findings = append(findings, a.errorDetector.Detect(resp, req, baseline)...)
+	findings = append(findings, a.leakDetector.Detect(resp, req, baseline)...)
+	findings = append(findings, a.enumerationDetector.Detect(result, baseline)...)
+
+	// Passive: check security headers (prefer baseline; fall back to fuzz response)
+	headerResp := baseline
+	if headerResp == nil {
+		headerResp = resp
+	}
+	findings = append(findings, a.headerDetector.Detect(headerResp, req.Endpoint.Method, req.Endpoint.Path)...)
 
 	// Add evidence to all findings
 	for i := range findings {
@@ -66,9 +78,16 @@ func (a *Analyzer) AnalyzeResult(result *fuzzer.FuzzResult, baseline *types.HTTP
 			}
 		}
 
+		// Preserve any MatchedData already set by detectors
+		var existingMatchedData []string
+		if findings[i].Evidence != nil {
+			existingMatchedData = findings[i].Evidence.MatchedData
+		}
+
 		findings[i].Evidence = &types.Evidence{
 			Request:      evidenceReq,
 			Response:     resp,
+			MatchedData:  existingMatchedData,
 			BaselineResp: baseline,
 		}
 		findings[i].Timestamp = result.Timestamp
@@ -116,6 +135,21 @@ func (r *DetectionRule) Match(resp *types.HTTPResponse) bool {
 	return false
 }
 
+// MatchWithData checks if a response matches the rule and returns the matched text
+func (r *DetectionRule) MatchWithData(resp *types.HTTPResponse) (bool, string) {
+	if r.Pattern != nil {
+		if m := r.Pattern.FindString(resp.Body); m != "" {
+			return true, m
+		}
+	}
+
+	if r.Condition != nil {
+		return r.Condition(resp), ""
+	}
+
+	return false, ""
+}
+
 // ToFinding converts a rule match to a finding
 func (r *DetectionRule) ToFinding() types.Finding {
 	return types.Finding{
@@ -130,6 +164,17 @@ func (r *DetectionRule) ToFinding() types.Finding {
 	}
 }
 
+// ToFindingWithData converts a rule match to a finding with matched data evidence
+func (r *DetectionRule) ToFindingWithData(matchedData []string) types.Finding {
+	f := r.ToFinding()
+	if len(matchedData) > 0 {
+		f.Evidence = &types.Evidence{
+			MatchedData: matchedData,
+		}
+	}
+	return f
+}
+
 // generateID generates a unique finding ID
 func generateID() string {
 	return time.Now().Format("20060102150405.000000")
@@ -141,6 +186,8 @@ type InjectionIndicators struct {
 	NoSQLErrorPatterns    []*regexp.Regexp
 	CommandErrorPatterns  []*regexp.Regexp
 	PathTraversalPatterns []*regexp.Regexp
+	LDAPErrorPatterns     []*regexp.Regexp
+	XPathErrorPatterns    []*regexp.Regexp
 	XSSReflectionPattern  func(payload string) *regexp.Regexp
 }
 
@@ -170,13 +217,10 @@ func NewInjectionIndicators() *InjectionIndicators {
 			regexp.MustCompile(`(?i)operator.*requires`),
 		},
 		CommandErrorPatterns: []*regexp.Regexp{
-			regexp.MustCompile(`(?i)uid=\d+.*gid=\d+`),
-			regexp.MustCompile(`(?i)root:x:0:0:`),
-			regexp.MustCompile(`(?i)/bin/bash`),
-			regexp.MustCompile(`(?i)command not found`),
-			regexp.MustCompile(`(?i)Permission denied`),
-			regexp.MustCompile(`(?i)No such file or directory`),
-			regexp.MustCompile(`(?i)sh: \d+:`),
+			regexp.MustCompile(`uid=\d+.*gid=\d+`),
+			regexp.MustCompile(`root:x:0:0:`),
+			regexp.MustCompile(`/bin/(ba)?sh`),
+			regexp.MustCompile(`sh: \d+:`),
 		},
 		PathTraversalPatterns: []*regexp.Regexp{
 			regexp.MustCompile(`root:.*:0:0:`),
@@ -185,68 +229,100 @@ func NewInjectionIndicators() *InjectionIndicators {
 			regexp.MustCompile(`<?php`),
 			regexp.MustCompile(`<%@`),
 		},
+		LDAPErrorPatterns: []*regexp.Regexp{
+			regexp.MustCompile(`(?i)LDAP error`),
+			regexp.MustCompile(`(?i)invalid DN syntax`),
+			regexp.MustCompile(`(?i)javax\.naming`),
+			regexp.MustCompile(`(?i)ldap_search`),
+			regexp.MustCompile(`(?i)Invalid LDAP filter`),
+			regexp.MustCompile(`(?i)Bad search filter`),
+		},
+		XPathErrorPatterns: []*regexp.Regexp{
+			regexp.MustCompile(`(?i)XPathException`),
+			regexp.MustCompile(`(?i)Invalid XPath`),
+			regexp.MustCompile(`(?i)XPATH syntax error`),
+			regexp.MustCompile(`(?i)javax\.xml\.xpath`),
+			regexp.MustCompile(`(?i)lxml\.etree\.XPathEvalError`),
+			regexp.MustCompile(`(?i)SimpleXMLElement::xpath`),
+		},
 	}
 }
 
-// CheckSQLInjection checks for SQL injection indicators
-func (i *InjectionIndicators) CheckSQLInjection(body string) bool {
+// CheckSQLInjection checks for SQL injection indicators and returns matched patterns
+func (i *InjectionIndicators) CheckSQLInjection(body string) (bool, []string) {
+	var matched []string
 	for _, pattern := range i.SQLErrorPatterns {
-		if pattern.MatchString(body) {
-			return true
+		if m := pattern.FindString(body); m != "" {
+			matched = append(matched, m)
 		}
 	}
-	return false
+	return len(matched) > 0, matched
 }
 
-// CheckNoSQLInjection checks for NoSQL injection indicators
-func (i *InjectionIndicators) CheckNoSQLInjection(body string) bool {
+// CheckNoSQLInjection checks for NoSQL injection indicators and returns matched patterns
+func (i *InjectionIndicators) CheckNoSQLInjection(body string) (bool, []string) {
+	var matched []string
 	for _, pattern := range i.NoSQLErrorPatterns {
-		if pattern.MatchString(body) {
-			return true
+		if m := pattern.FindString(body); m != "" {
+			matched = append(matched, m)
 		}
 	}
-	return false
+	return len(matched) > 0, matched
 }
 
-// CheckCommandInjection checks for command injection indicators
-func (i *InjectionIndicators) CheckCommandInjection(body string) bool {
+// CheckCommandInjection checks for command injection indicators and returns matched patterns
+func (i *InjectionIndicators) CheckCommandInjection(body string) (bool, []string) {
+	var matched []string
 	for _, pattern := range i.CommandErrorPatterns {
-		if pattern.MatchString(body) {
-			return true
+		if m := pattern.FindString(body); m != "" {
+			matched = append(matched, m)
 		}
 	}
-	return false
+	return len(matched) > 0, matched
 }
 
-// CheckPathTraversal checks for path traversal indicators
-func (i *InjectionIndicators) CheckPathTraversal(body string) bool {
+// CheckPathTraversal checks for path traversal indicators and returns matched patterns
+func (i *InjectionIndicators) CheckPathTraversal(body string) (bool, []string) {
+	var matched []string
 	for _, pattern := range i.PathTraversalPatterns {
-		if pattern.MatchString(body) {
-			return true
+		if m := pattern.FindString(body); m != "" {
+			matched = append(matched, m)
 		}
 	}
-	return false
+	return len(matched) > 0, matched
 }
 
-// CheckXSSReflection checks if a payload is reflected in the response
-func (i *InjectionIndicators) CheckXSSReflection(body, payload string) bool {
-	// Check for direct reflection
-	if strings.Contains(body, payload) {
-		return true
-	}
-
-	// Check for partially encoded reflection
-	encodedPayloads := []string{
-		strings.ReplaceAll(payload, "<", "&lt;"),
-		strings.ReplaceAll(payload, ">", "&gt;"),
-		strings.ReplaceAll(payload, "\"", "&quot;"),
-	}
-
-	for _, ep := range encodedPayloads {
-		if strings.Contains(body, ep) {
-			return true
+// CheckLDAPInjection checks for LDAP injection indicators and returns matched patterns
+func (i *InjectionIndicators) CheckLDAPInjection(body string) (bool, []string) {
+	var matched []string
+	for _, pattern := range i.LDAPErrorPatterns {
+		if m := pattern.FindString(body); m != "" {
+			matched = append(matched, m)
 		}
 	}
+	return len(matched) > 0, matched
+}
 
-	return false
+// CheckXPathInjection checks for XPath injection indicators and returns matched patterns
+func (i *InjectionIndicators) CheckXPathInjection(body string) (bool, []string) {
+	var matched []string
+	for _, pattern := range i.XPathErrorPatterns {
+		if m := pattern.FindString(body); m != "" {
+			matched = append(matched, m)
+		}
+	}
+	return len(matched) > 0, matched
+}
+
+// CheckXSSReflection checks if a payload is reflected in the response without encoding.
+// Encoded output (&lt;, &gt;, &quot;) means the defense IS working — not a vulnerability.
+func (i *InjectionIndicators) CheckXSSReflection(body, payload, contentType string) bool {
+	// Skip detection for JSON APIs — JSON responses echo input by design
+	// and reflected XSS does not apply in a JSON Content-Type context.
+	if strings.Contains(strings.ToLower(contentType), "application/json") {
+		return false
+	}
+
+	// Only trigger on raw/unencoded payload reflection
+	return strings.Contains(body, payload)
 }

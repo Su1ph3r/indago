@@ -236,7 +236,7 @@ func TestInjectionIndicators_CheckSQLInjection(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := indicators.CheckSQLInjection(tt.body)
+			result, _ := indicators.CheckSQLInjection(tt.body)
 			if result != tt.expected {
 				t.Errorf("CheckSQLInjection(%q) = %v, expected %v", tt.body, result, tt.expected)
 			}
@@ -260,7 +260,7 @@ func TestInjectionIndicators_CheckNoSQLInjection(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := indicators.CheckNoSQLInjection(tt.body)
+			result, _ := indicators.CheckNoSQLInjection(tt.body)
 			if result != tt.expected {
 				t.Errorf("CheckNoSQLInjection(%q) = %v, expected %v", tt.body, result, tt.expected)
 			}
@@ -278,14 +278,16 @@ func TestInjectionIndicators_CheckCommandInjection(t *testing.T) {
 	}{
 		{"uid/gid output", "uid=1000(user) gid=1000(user)", true},
 		{"passwd file", "root:x:0:0:root:/root:/bin/bash", true},
-		{"command not found", "sh: 1: unknown: command not found", true},
-		{"permission denied", "Permission denied", true},
+		{"sh error", "sh: 1: unknown: not found", true},
+		{"permission denied is not cmd injection", "Permission denied", false},
+		{"command not found is not cmd injection", "command not found", false},
+		{"no such file is not cmd injection", "No such file or directory", false},
 		{"clean response", "File processed successfully", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := indicators.CheckCommandInjection(tt.body)
+			result, _ := indicators.CheckCommandInjection(tt.body)
 			if result != tt.expected {
 				t.Errorf("CheckCommandInjection(%q) = %v, expected %v", tt.body, result, tt.expected)
 			}
@@ -297,18 +299,21 @@ func TestInjectionIndicators_CheckXSSReflection(t *testing.T) {
 	indicators := NewInjectionIndicators()
 
 	tests := []struct {
-		name     string
-		body     string
-		payload  string
-		expected bool
+		name        string
+		body        string
+		payload     string
+		contentType string
+		expected    bool
 	}{
-		{"direct reflection", "<html><script>alert(1)</script></html>", "<script>alert(1)</script>", true},
-		{"no reflection", "<html>Hello World</html>", "<script>alert(1)</script>", false},
+		{"direct reflection", "<html><script>alert(1)</script></html>", "<script>alert(1)</script>", "text/html", true},
+		{"no reflection", "<html>Hello World</html>", "<script>alert(1)</script>", "text/html", false},
+		{"encoded reflection is not vuln", "<html>&lt;script&gt;alert(1)&lt;/script&gt;</html>", "<script>alert(1)</script>", "text/html", false},
+		{"json content type skipped", `{"input":"<script>alert(1)</script>"}`, "<script>alert(1)</script>", "application/json", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := indicators.CheckXSSReflection(tt.body, tt.payload)
+			result := indicators.CheckXSSReflection(tt.body, tt.payload, tt.contentType)
 			if result != tt.expected {
 				t.Errorf("CheckXSSReflection() = %v, expected %v", result, tt.expected)
 			}
@@ -324,4 +329,84 @@ type testError struct {
 
 func (e *testError) Error() string {
 	return e.msg
+}
+
+func TestInjectionIndicators_CheckLDAPInjection(t *testing.T) {
+	indicators := NewInjectionIndicators()
+
+	tests := []struct {
+		name     string
+		body     string
+		expected bool
+	}{
+		{"ldap error", "LDAP error: invalid query", true},
+		{"invalid dn syntax", "Error: invalid DN syntax", true},
+		{"javax naming", "javax.naming.NamingException: connection refused", true},
+		{"ldap search function", "ldap_search(): Search error", true},
+		{"invalid ldap filter", "Invalid LDAP filter expression", true},
+		{"bad search filter", "Bad search filter: (&(uid=*))", true},
+		{"clean response", "Search results: 5 items found", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, _ := indicators.CheckLDAPInjection(tt.body)
+			if result != tt.expected {
+				t.Errorf("CheckLDAPInjection(%q) = %v, expected %v", tt.body, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestInjectionIndicators_CheckXPathInjection(t *testing.T) {
+	indicators := NewInjectionIndicators()
+
+	tests := []struct {
+		name     string
+		body     string
+		expected bool
+	}{
+		{"xpath exception", "XPathException: invalid expression", true},
+		{"invalid xpath", "Error: Invalid XPath query", true},
+		{"xpath syntax error", "XPATH syntax error near position 5", true},
+		{"javax xml xpath", "javax.xml.xpath.XPathExpressionException", true},
+		{"lxml xpath error", "lxml.etree.XPathEvalError: invalid expression", true},
+		{"simplexmlelement", "SimpleXMLElement::xpath(): error", true},
+		{"clean response", "XML document parsed successfully", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, _ := indicators.CheckXPathInjection(tt.body)
+			if result != tt.expected {
+				t.Errorf("CheckXPathInjection(%q) = %v, expected %v", tt.body, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestInjectionIndicators_CheckPathTraversal(t *testing.T) {
+	indicators := NewInjectionIndicators()
+
+	tests := []struct {
+		name     string
+		body     string
+		expected bool
+	}{
+		{"etc passwd", "root:x:0:0:root:/root:/bin/bash", true},
+		{"boot loader", "[boot loader]\ntimeout=30", true},
+		{"extensions section", "[extensions]\n; some config", true},
+		{"php tag", "<?php echo 'hello'; ?>", true},
+		{"asp tag", "<%@ Page Language=\"C#\" %>", true},
+		{"clean response", "File not found", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, _ := indicators.CheckPathTraversal(tt.body)
+			if result != tt.expected {
+				t.Errorf("CheckPathTraversal(%q) = %v, expected %v", tt.body, result, tt.expected)
+			}
+		})
+	}
 }

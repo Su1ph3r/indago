@@ -1,0 +1,312 @@
+# VAmPI Ground Truth - Known Vulnerabilities & Security Issues
+# Each entry defines a vulnerability, match criteria, and expected finding types.
+# Match rules use flexible matching: any of the listed types/severities constitutes a hit.
+
+vulnerabilities:
+  # ============================================================
+  # Critical / High - Exploitable Vulnerabilities
+  # ============================================================
+
+  - id: "001"
+    name: "SQL Injection in username lookup"
+    class: "sqli"
+    endpoint: "/users/v1/{username}"
+    method: "GET"
+    parameter: "username"
+    description: >
+      The username parameter is directly interpolated into a SQL query.
+      Injecting SQL syntax (e.g., ' OR 1=1--) returns all users or causes errors.
+    match_rules:
+      finding_types:
+        - "sqli"
+        - "sql_injection"
+      min_severity: "medium"
+      min_confidence: "low"
+      endpoint_pattern: "/users/v1/*"
+      method: "GET"
+    min_matches: 1
+
+  - id: "002"
+    name: "BOLA on password change"
+    class: "bola"
+    endpoint: "/users/v1/{username}/password"
+    method: "PUT"
+    parameter: "username"
+    description: >
+      Any authenticated user can change another user's password by manipulating
+      the username in the path. No ownership check is performed.
+    match_rules:
+      finding_types:
+        - "bola"
+        - "auth_bypass"
+        - "bfla"
+        - "idor"
+      min_severity: "medium"
+      min_confidence: "low"
+      endpoint_pattern: "/users/v1/*/password"
+      method: "PUT"
+    min_matches: 1
+
+  - id: "003"
+    name: "BOLA on user endpoints"
+    class: "bola"
+    endpoint: "/users/v1/*"
+    method: "*"
+    parameter: "username"
+    description: >
+      Multiple user endpoints allow accessing/modifying other users' data
+      by changing the username path parameter. Includes GET user details,
+      PUT email change, DELETE user.
+    match_rules:
+      finding_types:
+        - "bola"
+        - "idor"
+        - "auth_bypass"
+        - "bfla"
+      min_severity: "low"
+      min_confidence: "low"
+      endpoint_pattern: "/users/v1/*"
+    min_matches: 2
+
+  - id: "004"
+    name: "Mass assignment on user registration"
+    class: "mass_assignment"
+    endpoint: "/users/v1/register"
+    method: "POST"
+    description: >
+      The registration endpoint accepts an 'admin' field in the JSON body.
+      Setting admin=true during registration creates an admin account,
+      bypassing intended privilege restrictions.
+    match_rules:
+      finding_types:
+        - "mass_assignment"
+      min_severity: "medium"
+      min_confidence: "low"
+      endpoint_pattern: "/users/v1/register"
+      method: "POST"
+    min_matches: 1
+
+  - id: "005"
+    name: "Data exposure via debug endpoint"
+    class: "data_exposure"
+    endpoint: "/users/v1/_debug"
+    method: "GET"
+    description: >
+      The _debug endpoint exposes all user data including passwords,
+      emails, and admin status without authentication.
+    match_rules:
+      finding_types:
+        - "data_exposure"
+        - "data_leak"
+        - "sensitive_data"
+      min_severity: "medium"
+      min_confidence: "low"
+      endpoint_pattern: "/users/v1/_debug"
+      method: "GET"
+    min_matches: 1
+
+  - id: "006"
+    name: "User enumeration via login"
+    class: "enumeration"
+    endpoint: "/users/v1/login"
+    method: "POST"
+    description: >
+      The login endpoint returns different error messages for invalid usernames
+      vs invalid passwords, allowing user enumeration. 'Username does not exist'
+      vs 'Password is not correct' reveals valid accounts.
+    match_rules:
+      finding_types:
+        - "enumeration"
+        - "auth_bypass"
+        - "user_enumeration"
+        - "data_exposure"
+      min_severity: "low"
+      min_confidence: "low"
+      endpoint_pattern: "/users/v1/login"
+      method: "POST"
+    min_matches: 1
+
+  - id: "008"
+    name: "JWT weak secret"
+    class: "jwt_manipulation"
+    endpoint: "*"
+    method: "*"
+    description: >
+      VAmPI uses a weak/predictable JWT signing secret. The token can be
+      forged by brute-forcing or guessing the secret key, allowing
+      authentication bypass and privilege escalation.
+    match_rules:
+      finding_types:
+        - "jwt_manipulation"
+        - "auth_bypass"
+      min_severity: "medium"
+      min_confidence: "low"
+    min_matches: 1
+
+  # ============================================================
+  # Medium - Security Weaknesses
+  # ============================================================
+
+  - id: "007"
+    name: "Missing rate limiting on email change"
+    class: "rate_limit"
+    endpoint: "/users/v1/{username}/email"
+    method: "PUT"
+    description: >
+      The email change endpoint has no rate limiting, allowing unlimited
+      requests. Combined with BOLA, this enables mass account takeover.
+    match_rules:
+      finding_types:
+        - "rate_limit"
+        - "rate_limit_missing"
+      min_severity: "low"
+      min_confidence: "low"
+      endpoint_pattern: "/users/v1/*/email"
+    min_matches: 1
+
+  - id: "009"
+    name: "Missing rate limiting on login"
+    class: "rate_limit"
+    endpoint: "/users/v1/login"
+    method: "POST"
+    description: >
+      The login endpoint has no rate limiting, enabling credential stuffing
+      and brute force attacks against user accounts.
+    match_rules:
+      finding_types:
+        - "rate_limit"
+        - "rate_limit_missing"
+      min_severity: "low"
+      min_confidence: "low"
+      endpoint_pattern: "/users/v1/login"
+      method: "POST"
+    min_matches: 1
+
+  - id: "010"
+    name: "Missing rate limiting on registration"
+    class: "rate_limit"
+    endpoint: "/users/v1/register"
+    method: "POST"
+    description: >
+      The registration endpoint has no rate limiting, enabling mass account
+      creation and abuse.
+    match_rules:
+      finding_types:
+        - "rate_limit"
+        - "rate_limit_missing"
+      min_severity: "low"
+      min_confidence: "low"
+      endpoint_pattern: "/users/v1/register"
+      method: "POST"
+    min_matches: 1
+
+  - id: "011"
+    name: "Missing rate limiting on password change"
+    class: "rate_limit"
+    endpoint: "/users/v1/{username}/password"
+    method: "PUT"
+    description: >
+      The password change endpoint has no rate limiting. Combined with BOLA,
+      this allows an attacker to rapidly change passwords for multiple accounts.
+    match_rules:
+      finding_types:
+        - "rate_limit"
+        - "rate_limit_missing"
+      min_severity: "low"
+      min_confidence: "low"
+      endpoint_pattern: "/users/v1/*/password"
+      method: "PUT"
+    min_matches: 1
+
+  - id: "012"
+    name: "XSS in error pages"
+    class: "xss"
+    endpoint: "/users/v1/{username}"
+    method: "GET"
+    description: >
+      Input payloads are reflected without encoding in Werkzeug debugger error
+      pages. When debug mode is enabled, injected XSS payloads execute in the
+      context of the error page.
+    match_rules:
+      finding_types:
+        - "xss"
+      min_severity: "medium"
+      min_confidence: "low"
+      endpoint_pattern: "/users/v1/*"
+    min_matches: 1
+
+  - id: "013"
+    name: "Stack trace and information disclosure"
+    class: "information_disclosure"
+    endpoint: "*"
+    method: "*"
+    description: >
+      Multiple endpoints expose Python stack traces, internal file paths,
+      library versions (SQLAlchemy, Werkzeug), and database technology
+      (SQLite) in 500 error responses. This reveals the application's
+      technology stack and internal architecture to attackers.
+    match_rules:
+      finding_types:
+        - "information_disclosure"
+        - "stack_trace_exposure"
+        - "python_error"
+      min_severity: "low"
+      min_confidence: "low"
+    min_matches: 1
+
+  - id: "014"
+    name: "Improper error handling on user endpoints"
+    class: "error_handling"
+    endpoint: "*"
+    method: "*"
+    description: >
+      Multiple endpoints return unhandled 500 errors when processing
+      unexpected input. The application crashes instead of returning
+      proper error responses, indicating missing input validation
+      and error handling.
+    match_rules:
+      finding_types:
+        - "server_error"
+        - "error_triggered"
+      min_severity: "low"
+      min_confidence: "low"
+    min_matches: 1
+
+  # ============================================================
+  # Low - Hardening Issues
+  # ============================================================
+
+  - id: "015"
+    name: "Missing security headers"
+    class: "missing_headers"
+    endpoint: "*"
+    method: "*"
+    description: >
+      All endpoints are missing standard security headers including
+      Strict-Transport-Security (HSTS), X-Content-Type-Options,
+      X-Frame-Options, and Content-Security-Policy. This leaves
+      the application vulnerable to clickjacking, MIME type sniffing,
+      and protocol downgrade attacks.
+    match_rules:
+      finding_types:
+        - "missing_security_headers"
+      min_severity: "low"
+      min_confidence: "low"
+    min_matches: 1
+
+  - id: "016"
+    name: "Missing rate limiting on remaining endpoints"
+    class: "rate_limit"
+    endpoint: "*"
+    method: "*"
+    description: >
+      Beyond the critical auth endpoints, remaining API endpoints
+      (books, user listing, user details, database init) also lack
+      rate limiting, enabling scraping, enumeration, and abuse.
+    match_rules:
+      finding_types:
+        - "rate_limit"
+        - "rate_limit_missing"
+      min_severity: "low"
+      min_confidence: "low"
+    min_matches: 5

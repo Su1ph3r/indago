@@ -38,6 +38,8 @@ func (g *BOLAGenerator) Generate(endpoint types.Endpoint, param *types.Parameter
 		payloads = append(payloads, g.numericBOLAPayloads(originalValue)...)
 	} else if g.isUUID(originalValue) {
 		payloads = append(payloads, g.uuidBOLAPayloads(originalValue)...)
+	} else {
+		payloads = append(payloads, g.stringBOLAPayloads(param, originalValue)...)
 	}
 
 	// Generic object reference manipulation
@@ -190,6 +192,98 @@ func (g *BOLAGenerator) uuidBOLAPayloads(original string) []Payload {
 	}
 
 	return payloads
+}
+
+// stringBOLAPayloads generates payloads for string-based object identifiers (e.g., usernames)
+func (g *BOLAGenerator) stringBOLAPayloads(param *types.Parameter, original string) []Payload {
+	var payloads []Payload
+
+	// Common test usernames for horizontal privilege escalation
+	commonUsers := []string{
+		"admin", "administrator", "root", "test", "user",
+		"user1", "user2", "guest", "demo", "operator",
+		"service", "api", "default",
+	}
+
+	// If we have an original value, generate variants
+	if original != "" {
+		// Try sequential variants (name1 → name2, name3)
+		if idx := indexOfTrailingNumber(original); idx >= 0 {
+			prefix := original[:idx]
+			numStr := original[idx:]
+			if num, err := strconv.Atoi(numStr); err == nil {
+				for _, delta := range []int{-1, 1, 2, 10, 100} {
+					variant := fmt.Sprintf("%s%d", prefix, num+delta)
+					if variant != original {
+						payloads = append(payloads, Payload{
+							Value:       variant,
+							Type:        types.AttackBOLA,
+							Category:    "authorization",
+							Description: fmt.Sprintf("BOLA: Sequential string ID variant (%s)", variant),
+							Metadata:    map[string]string{"original": original},
+						})
+					}
+				}
+			}
+		}
+
+		// Add common users that differ from original
+		for _, u := range commonUsers {
+			if u != original {
+				payloads = append(payloads, Payload{
+					Value:       u,
+					Type:        types.AttackBOLA,
+					Category:    "authorization",
+					Description: fmt.Sprintf("BOLA: Common username (%s)", u),
+					Metadata:    map[string]string{"original": original},
+				})
+			}
+		}
+	} else {
+		// No original value — use common usernames directly
+		for _, u := range commonUsers {
+			payloads = append(payloads, Payload{
+				Value:       u,
+				Type:        types.AttackBOLA,
+				Category:    "authorization",
+				Description: fmt.Sprintf("BOLA: Common username (%s)", u),
+			})
+		}
+	}
+
+	// Slug-like path parameters often accept slugs
+	nameLower := strings.ToLower(param.Name)
+	if strings.Contains(nameLower, "slug") || strings.Contains(nameLower, "name") || strings.Contains(nameLower, "handle") {
+		slugPayloads := []string{"test-item", "default-item", "first-item", "example"}
+		for _, s := range slugPayloads {
+			if s != original {
+				payloads = append(payloads, Payload{
+					Value:       s,
+					Type:        types.AttackBOLA,
+					Category:    "authorization",
+					Description: fmt.Sprintf("BOLA: Slug variant (%s)", s),
+					Metadata:    map[string]string{"original": original},
+				})
+			}
+		}
+	}
+
+	return payloads
+}
+
+// indexOfTrailingNumber returns the index where trailing digits start, or -1
+func indexOfTrailingNumber(s string) int {
+	if len(s) == 0 {
+		return -1
+	}
+	i := len(s)
+	for i > 0 && s[i-1] >= '0' && s[i-1] <= '9' {
+		i--
+	}
+	if i == len(s) || i == 0 {
+		return -1 // no trailing number, or entire string is digits
+	}
+	return i
 }
 
 // genericBOLAPayloads generates generic object reference bypass payloads

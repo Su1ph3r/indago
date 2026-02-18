@@ -107,6 +107,26 @@ func (p *OpenAPIParser) parseOperation(method, path, baseURL string, op *openapi
 		endpoint.Auth = p.parseSecurityRequirements(*op.Security)
 	}
 
+	// If endpoint has auth, synthesize an Authorization header parameter for JWT testing
+	if endpoint.Auth != nil {
+		hasAuthHeader := false
+		for _, param := range endpoint.Parameters {
+			if strings.EqualFold(param.Name, "Authorization") && strings.EqualFold(param.In, "header") {
+				hasAuthHeader = true
+				break
+			}
+		}
+		if !hasAuthHeader {
+			endpoint.Parameters = append(endpoint.Parameters, types.Parameter{
+				Name:     "Authorization",
+				In:       "header",
+				Type:     "string",
+				Required: true,
+				Example:  "Bearer <token>",
+			})
+		}
+	}
+
 	return endpoint
 }
 

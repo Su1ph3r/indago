@@ -107,7 +107,7 @@ func (da *DifferentialAnalyzer) comparePair(endpoint string, ctxA, ctxB types.Au
 	var anomalies []DifferentialAnomaly
 
 	// Check for BOLA/IDOR: lower privilege sees higher privilege data
-	if bolaAnomaly := da.checkBOLA(ctxA, ctxB, respA, respB); bolaAnomaly != nil {
+	if bolaAnomaly := da.checkBOLA(endpoint, ctxA, ctxB, respA, respB); bolaAnomaly != nil {
 		anomalies = append(anomalies, *bolaAnomaly)
 	}
 
@@ -135,7 +135,15 @@ func (da *DifferentialAnalyzer) comparePair(endpoint string, ctxA, ctxB types.Au
 }
 
 // checkBOLA checks for Broken Object Level Authorization
-func (da *DifferentialAnalyzer) checkBOLA(ctxA, ctxB types.AuthContext, respA, respB *types.HTTPResponse) *DifferentialAnomaly {
+func (da *DifferentialAnalyzer) checkBOLA(endpoint string, ctxA, ctxB types.AuthContext, respA, respB *types.HTTPResponse) *DifferentialAnomaly {
+	// Skip collection endpoints — BOLA only applies to specific resource access via path parameters
+	if parts := strings.SplitN(endpoint, ":", 2); len(parts) == 2 {
+		path := parts[1]
+		if !strings.Contains(path, "{") {
+			return nil
+		}
+	}
+
 	// Skip if same privilege level
 	if ctxA.Priority == ctxB.Priority {
 		return nil
@@ -421,6 +429,9 @@ func (da *DifferentialAnalyzer) calculateSimilarity(bodyA, bodyB string) float64
 
 	// Simple character-level comparison
 	lenA, lenB := len(bodyA), len(bodyB)
+	if lenA == 0 && lenB == 0 {
+		return 1.0
+	}
 	if lenA == 0 || lenB == 0 {
 		return 0.0
 	}
@@ -520,17 +531,29 @@ func ParseAuthContexts(args []string) []types.AuthContext {
 
 		ctx := types.AuthContext{
 			Name:     name,
-			Token:    token,
 			Priority: i,
 		}
 
-		// Detect auth type
-		if strings.HasPrefix(token, "eyJ") {
+		// Detect auth type and strip scheme prefix from token value.
+		// Users pass tokens as "Bearer eyJ..." but applyAuthContext adds
+		// the scheme prefix back, so storing it in Token causes duplication
+		// ("Bearer Bearer eyJ...") which breaks authentication.
+		tokenLower := strings.ToLower(token)
+		if strings.HasPrefix(tokenLower, "bearer ") {
 			ctx.AuthType = "bearer"
+			ctx.Token = strings.TrimSpace(token[7:])
+		} else if strings.HasPrefix(tokenLower, "basic ") {
+			ctx.AuthType = "basic"
+			ctx.Token = strings.TrimSpace(token[6:])
+		} else if strings.HasPrefix(token, "eyJ") {
+			ctx.AuthType = "bearer"
+			ctx.Token = token
 		} else if strings.Contains(name, "cookie") {
 			ctx.AuthType = "cookie"
+			ctx.Token = token
 		} else {
 			ctx.AuthType = "bearer"
+			ctx.Token = token
 		}
 
 		contexts = append(contexts, ctx)

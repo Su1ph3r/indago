@@ -191,6 +191,16 @@ const (
 	// WAF bypass
 	AttackWAFBypass = "waf_bypass"
 
+	// New attack categories
+	AttackXXE              = "xxe"
+	AttackSmuggling        = "request_smuggling"
+	AttackDeserialization   = "deserialization"
+	AttackCachePoisoning   = "cache_poisoning"
+	AttackWebSocket        = "websocket"
+
+	// Enumeration
+	AttackEnumeration = "enumeration"
+
 	// Passive/endpoint-level checks
 	AttackCORSMisconfig        = "cors_misconfig"
 	AttackMethodTampering      = "method_tampering"

@@ -4,6 +4,7 @@ package fuzzer
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -17,15 +18,12 @@ import (
 
 // Engine is the core fuzzing engine
 type Engine struct {
-	config     types.Config
-	client     *http.Client
+	config      types.Config
+	client      *http.Client
 	rateLimiter *RateLimiter
-	session    *SessionManager
-	results    chan *FuzzResult
-	errors     chan error
-	wg         sync.WaitGroup
-	mu         sync.Mutex
-	stats      *Stats
+	session     *SessionManager
+	mu          sync.Mutex
+	stats       *Stats
 }
 
 // FuzzResult represents the result of a fuzz request
@@ -90,8 +88,6 @@ func NewEngine(config types.Config) *Engine {
 		client:      client,
 		rateLimiter: NewRateLimiter(config.Scan.RateLimit),
 		session:     NewSessionManager(config.HTTP),
-		results:     make(chan *FuzzResult, config.Scan.Concurrency*10),
-		errors:      make(chan error, 100),
 		stats:       &Stats{},
 	}
 }
@@ -107,13 +103,21 @@ func (e *Engine) Fuzz(ctx context.Context, requests []payloads.FuzzRequest) <-ch
 		workers = 10
 	}
 
+	// Create a fresh results channel for this Fuzz call so the engine is reusable.
+	// Workers send to this local variable, not a struct field, to avoid a race
+	// condition if Fuzz() is called again while workers are still running.
+	results := make(chan *FuzzResult, workers*10)
+
 	// Request channel for workers
 	reqChan := make(chan payloads.FuzzRequest, workers*2)
 
+	// Use a local WaitGroup so concurrent Fuzz() calls are independent.
+	var wg sync.WaitGroup
+
 	// Start workers
 	for i := 0; i < workers; i++ {
-		e.wg.Add(1)
-		go e.worker(ctx, reqChan)
+		wg.Add(1)
+		go e.worker(ctx, reqChan, results, &wg)
 	}
 
 	// Feed requests to workers
@@ -130,21 +134,25 @@ func (e *Engine) Fuzz(ctx context.Context, requests []payloads.FuzzRequest) <-ch
 
 	// Wait for completion and close results channel
 	go func() {
-		e.wg.Wait()
+		wg.Wait()
+		e.stats.mu.Lock()
 		e.stats.EndTime = time.Now()
 		duration := e.stats.EndTime.Sub(e.stats.StartTime).Seconds()
 		if duration > 0 {
 			e.stats.RequestsPerSec = float64(e.stats.TotalRequests) / duration
 		}
-		close(e.results)
+		e.stats.mu.Unlock()
+		close(results)
 	}()
 
-	return e.results
+	return results
 }
 
-// worker processes fuzz requests
-func (e *Engine) worker(ctx context.Context, requests <-chan payloads.FuzzRequest) {
-	defer e.wg.Done()
+// worker processes fuzz requests.
+// It sends results to the provided channel (local to the Fuzz() call) to avoid
+// a race condition on the struct field when Fuzz() is called multiple times.
+func (e *Engine) worker(ctx context.Context, requests <-chan payloads.FuzzRequest, results chan<- *FuzzResult, wg *sync.WaitGroup) {
+	defer wg.Done()
 
 	for req := range requests {
 		select {
@@ -158,7 +166,7 @@ func (e *Engine) worker(ctx context.Context, requests <-chan payloads.FuzzReques
 
 		// Execute request
 		result := e.executeRequest(ctx, req)
-		e.results <- result
+		results <- result
 
 		// Update stats
 		e.stats.mu.Lock()
@@ -185,8 +193,28 @@ func (e *Engine) executeRequest(ctx context.Context, fuzzReq payloads.FuzzReques
 		return result
 	}
 
+	// Save diff-auth Authorization before session.Apply overwrites it.
+	// Only preserve if explicitly set in ep.Headers (from diff-auth context),
+	// not from parameter examples which contain placeholder values like "Bearer <token>".
+	diffAuthHeader := ""
+	if _, hasDiffAuth := fuzzReq.Endpoint.Headers["Authorization"]; hasDiffAuth {
+		diffAuthHeader = httpReq.Header.Get("Authorization")
+	}
+
 	// Apply session/auth
 	e.session.Apply(httpReq)
+
+	// Restore diff-auth header if it was set (from ep.Headers)
+	if diffAuthHeader != "" {
+		httpReq.Header.Set("Authorization", diffAuthHeader)
+	}
+
+	// Re-apply header fuzz payload after session.Apply() so the fuzz value
+	// (e.g. a malicious JWT in the Authorization header) is not overwritten
+	// by the session's default auth token.
+	if fuzzReq.Position == "header" && fuzzReq.Param != nil {
+		httpReq.Header.Set(fuzzReq.Param.Name, fuzzReq.Payload.Value)
+	}
 
 	// Capture the actual request (after session headers applied)
 	actualHeaders := make(map[string]string)
@@ -225,6 +253,7 @@ func (e *Engine) buildRequest(ctx context.Context, fuzzReq payloads.FuzzRequest)
 	// Apply payload to the appropriate location
 	var body string
 	queryParams := url.Values{}
+	headerParams := make(map[string]string)
 
 	for _, param := range ep.Parameters {
 		value := e.getParamValue(&param)
@@ -239,6 +268,16 @@ func (e *Engine) buildRequest(ctx context.Context, fuzzReq payloads.FuzzRequest)
 			queryParams.Set(param.Name, value)
 		case "path":
 			targetURL = replacePathParam(targetURL, param.Name, value)
+		case "header":
+			// Skip Authorization from parameter examples — auth is managed by
+			// session.Apply (--auth-header) and diff-auth contexts (ep.Headers).
+			// Only include Authorization if this parameter is the active fuzz target
+			// (e.g., JWT manipulation payloads targeting the Authorization header).
+			isFuzzTarget := fuzzReq.Param != nil && param.Name == fuzzReq.Param.Name && param.In == fuzzReq.Position
+			if strings.EqualFold(param.Name, "Authorization") && !isFuzzTarget {
+				continue
+			}
+			headerParams[param.Name] = value
 		}
 	}
 
@@ -272,6 +311,11 @@ func (e *Engine) buildRequest(ctx context.Context, fuzzReq payloads.FuzzRequest)
 
 	if err != nil {
 		return nil, "", err
+	}
+
+	// Apply header parameters from the endpoint spec (includes fuzz payloads)
+	for key, value := range headerParams {
+		req.Header.Set(key, value)
 	}
 
 	// Set headers
@@ -318,23 +362,68 @@ func (e *Engine) buildRequest(ctx context.Context, fuzzReq payloads.FuzzRequest)
 	return req, body, nil
 }
 
-// buildBody builds the request body
+// buildBody builds the request body.
+//
+// When the fuzz target is a body parameter, the payload is injected into that
+// field while all other body fields retain their example/default values.
+//
+// When the fuzz target is NOT a body parameter (e.g. path, query, header),
+// the body is still populated from the endpoint's schema so that
+// PUT/POST/PATCH requests carry a valid body and don't get rejected with 400.
 func (e *Engine) buildBody(body *types.RequestBody, fuzzReq payloads.FuzzRequest) string {
-	// For simplicity, rebuild JSON body
-	// In production, you'd want more sophisticated body building
+	targetingBody := fuzzReq.Position == "body" && fuzzReq.Param != nil
 
+	// If we have a top-level Example string, use it as the base body.
 	if body.Example != nil {
 		switch v := body.Example.(type) {
 		case string:
-			// If targeting a body parameter, inject payload
-			if fuzzReq.Position == "body" && fuzzReq.Param != nil {
+			if targetingBody {
 				return injectPayloadIntoJSON(v, fuzzReq.Param.Name, fuzzReq.Payload.Value)
 			}
 			return v
 		}
 	}
 
+	// No top-level example -- build body from Fields if available.
+	if len(body.Fields) > 0 {
+		obj := make(map[string]interface{})
+		for _, f := range body.Fields {
+			// If this field is the fuzz target, inject the payload.
+			if targetingBody && f.Name == fuzzReq.Param.Name {
+				obj[f.Name] = fuzzReq.Payload.Value
+				continue
+			}
+			// Otherwise, use the field's example or a type-appropriate default.
+			obj[f.Name] = fieldValue(f)
+		}
+		data, err := json.Marshal(obj)
+		if err != nil {
+			return ""
+		}
+		return string(data)
+	}
+
 	return ""
+}
+
+// fieldValue returns an appropriate value for a BodyField: its Example if
+// set, otherwise a zero-value placeholder based on its declared type.
+func fieldValue(f types.BodyField) interface{} {
+	if f.Example != nil {
+		return f.Example
+	}
+	switch f.Type {
+	case "integer", "number":
+		return 0
+	case "boolean":
+		return false
+	case "array":
+		return []interface{}{}
+	case "object":
+		return map[string]interface{}{}
+	default: // "string" and anything else
+		return ""
+	}
 }
 
 // getParamValue gets the value for a parameter
@@ -472,9 +561,17 @@ func indexOf(s, substr string) int {
 	return -1
 }
 
-func injectPayloadIntoJSON(json, field, payload string) string {
-	// Simple JSON injection - replace field value
-	// This is a simplified implementation
-	// In production, use proper JSON parsing
-	return json // Return original for now, proper implementation would modify
+func injectPayloadIntoJSON(rawJSON, field, payload string) string {
+	// Parse into a generic map, replace the target field, re-marshal.
+	var obj map[string]interface{}
+	if err := json.Unmarshal([]byte(rawJSON), &obj); err != nil {
+		// Not valid JSON -- fall back to returning the original string.
+		return rawJSON
+	}
+	obj[field] = payload
+	data, err := json.Marshal(obj)
+	if err != nil {
+		return rawJSON
+	}
+	return string(data)
 }

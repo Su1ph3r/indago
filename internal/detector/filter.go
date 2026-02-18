@@ -2,6 +2,7 @@
 package detector
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -58,7 +59,19 @@ func (f *FindingFilter) Filter(findings []types.Finding) []types.Finding {
 
 // calculateConfidence calculates a confidence score for a finding
 func (f *FindingFilter) calculateConfidence(finding types.Finding) float64 {
-	score := 0.5 // Base score
+	// Start from the detector's assigned confidence as the base:
+	// high=0.8, medium=0.5, low=0.3
+	var score float64
+	switch finding.Confidence {
+	case types.ConfidenceHigh:
+		score = 0.8
+	case types.ConfidenceMedium:
+		score = 0.5
+	case types.ConfidenceLow:
+		score = 0.3
+	default:
+		score = 0.5
+	}
 
 	// Evidence quality factors
 	if finding.Evidence != nil {
@@ -161,36 +174,106 @@ func (f *FindingFilter) confidenceToString(score float64) string {
 
 // deduplicateByEndpoint removes duplicate findings for the same endpoint/type
 func (f *FindingFilter) deduplicateByEndpoint(findings []types.Finding) []types.Finding {
-	// Sort by severity (highest first) so we keep the most severe
-	sort.Slice(findings, func(i, j int) bool {
-		return severityValue(findings[i].Severity) > severityValue(findings[j].Severity)
+	// Sort by best evidence: severity (highest first), then confidence
+	// (highest first), then evidence richness (richest first)
+	sort.SliceStable(findings, func(i, j int) bool {
+		// Primary: severity (highest first)
+		si, sj := severityValue(findings[i].Severity), severityValue(findings[j].Severity)
+		if si != sj {
+			return si > sj
+		}
+		// Secondary: confidence (highest first)
+		ci, cj := confidenceValue(findings[i].Confidence), confidenceValue(findings[j].Confidence)
+		if ci != cj {
+			return ci > cj
+		}
+		// Tertiary: evidence richness (richest first)
+		return evidenceRichness(findings[i]) > evidenceRichness(findings[j])
 	})
 
-	seen := make(map[string]bool)
+	seen := make(map[string]int) // maps dedup key -> index in deduplicated slice
+	counts := make(map[string]int) // maps dedup key -> total occurrence count
 	var deduplicated []types.Finding
 
 	for _, finding := range findings {
 		// Create a key for deduplication
 		key := f.dedupeKey(finding)
 
-		if !seen[key] {
-			seen[key] = true
+		if _, exists := seen[key]; !exists {
+			seen[key] = len(deduplicated)
+			counts[key] = 1
 			deduplicated = append(deduplicated, finding)
+		} else {
+			counts[key]++
+		}
+	}
+
+	// Tag surviving findings with payload confirmation count
+	for key, count := range counts {
+		if count > 1 {
+			idx := seen[key]
+			desc := deduplicated[idx].Description
+			suffix := fmt.Sprintf(" [Confirmed by %d payloads]", count)
+			if !strings.Contains(desc, suffix) {
+				deduplicated[idx].Description = strings.TrimSpace(desc) + suffix
+			}
 		}
 	}
 
 	return deduplicated
 }
 
+// confidenceValue returns numeric value for confidence comparison
+func confidenceValue(confidence string) int {
+	switch confidence {
+	case types.ConfidenceHigh:
+		return 3
+	case types.ConfidenceMedium:
+		return 2
+	case types.ConfidenceLow:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// evidenceRichness scores how much supporting evidence a finding has
+func evidenceRichness(finding types.Finding) int {
+	score := 0
+	if finding.Evidence != nil {
+		score++
+		if len(finding.Evidence.MatchedData) > 0 {
+			score++
+		}
+		if finding.Evidence.BaselineResp != nil {
+			score++
+		}
+	}
+	return score
+}
+
 // dedupeKey generates a deduplication key for a finding
 func (f *FindingFilter) dedupeKey(finding types.Finding) string {
-	// Dedupe by endpoint + attack type + parameter
-	return strings.Join([]string{
-		finding.Method,
-		finding.Endpoint,
-		finding.Type,
-		finding.Parameter,
-	}, ":")
+	// For noise/informational finding types and high-FP vulnerability types,
+	// deduplicate by endpoint+type only (not per parameter).
+	switch finding.Type {
+	case "server_error", "error_triggered", "data_leak", "information_disclosure",
+		"missing_security_headers", "stack_trace_exposure", "file_path_disclosure",
+		"python_error", "database_error", "response_anomaly", "rate_limit_missing":
+		return strings.Join([]string{
+			finding.Method,
+			finding.Endpoint,
+			finding.Type,
+		}, ":")
+	default:
+		// For genuine vulnerability findings, keep parameter in the key
+		return strings.Join([]string{
+			finding.Method,
+			finding.Endpoint,
+			finding.Type,
+			finding.Parameter,
+		}, ":")
+	}
 }
 
 // severityValue returns numeric value for severity comparison
@@ -269,7 +352,49 @@ func NewNoiseFilter() *NoiseFilter {
 				},
 				Description: "Method tampering on OPTIONS (normal CORS preflight)",
 			},
-		},
+			{
+				Name: "infrastructure_error",
+				Condition: func(f types.Finding) bool {
+					return f.Type == "server_error" &&
+						f.Evidence != nil &&
+						f.Evidence.Response != nil &&
+						(f.Evidence.Response.StatusCode == 502 ||
+							f.Evidence.Response.StatusCode == 503 ||
+							f.Evidence.Response.StatusCode == 504)
+				},
+				Description: "Infrastructure errors (502/503/504)",
+			},
+			{
+				Name: "content_anomaly_noise",
+				Condition: func(f types.Finding) bool {
+					return f.Type == "content_anomaly"
+				},
+				Description: "Content anomaly findings (dynamic content noise)",
+			},
+			{
+				Name: "jwt_on_auth_endpoint",
+				Condition: func(f types.Finding) bool {
+					if f.Type != "data_leak" || f.Title != "JWT Token Exposed" {
+						return false
+					}
+					ep := strings.ToLower(f.Endpoint)
+					return strings.Contains(ep, "auth") ||
+						strings.Contains(ep, "login") ||
+						strings.Contains(ep, "token") ||
+						strings.Contains(ep, "oauth")
+				},
+				Description: "JWT tokens on authentication endpoints",
+			},
+			{
+				Name: "technology_version_disclosure",
+				Condition: func(f types.Finding) bool {
+					return f.Type == "information_disclosure" &&
+						f.Severity == types.SeverityInfo &&
+						f.Title == "Technology Version Disclosure"
+				},
+				Description: "Technology version disclosure (informational noise)",
+			},
+			},
 	}
 }
 

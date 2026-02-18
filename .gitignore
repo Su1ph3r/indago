@@ -36,6 +36,9 @@ dist/
 # VHS tape files
 *.tape
 
+# Benchmark scan results
+testdata/vampi/results/
+
 # AI assistant files
 CLAUDE.md
 .claude/

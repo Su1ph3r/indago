@@ -1,6 +1,7 @@
 package detector
 
 import (
+	"fmt"
 	"regexp"
 
 	"github.com/su1ph3r/indago/internal/payloads"
@@ -135,12 +136,21 @@ func (d *ErrorPatternDetector) initRules() {
 }
 
 // Detect detects error patterns in a response
-func (d *ErrorPatternDetector) Detect(resp *types.HTTPResponse, req *payloads.FuzzRequest) []types.Finding {
+func (d *ErrorPatternDetector) Detect(resp *types.HTTPResponse, req *payloads.FuzzRequest, baseline *types.HTTPResponse) []types.Finding {
 	var findings []types.Finding
 
 	for _, rule := range d.rules {
-		if rule.Match(resp) {
-			finding := rule.ToFinding()
+		matched, matchedText := rule.MatchWithData(resp)
+		if matched {
+			// Suppress if the same pattern exists in the baseline response
+			if baseline != nil && rule.Match(baseline) {
+				continue
+			}
+			var matchedData []string
+			if matchedText != "" {
+				matchedData = append(matchedData, fmt.Sprintf("%s: %s", rule.Name, matchedText))
+			}
+			finding := rule.ToFindingWithData(matchedData)
 			findings = append(findings, finding)
 		}
 	}
