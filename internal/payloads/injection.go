@@ -1,6 +1,7 @@
 package payloads
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/su1ph3r/indago/pkg/types"
@@ -268,16 +269,8 @@ func (g *SSRFGenerator) Type() string {
 func (g *SSRFGenerator) Generate(endpoint types.Endpoint, param *types.Parameter) []Payload {
 	var payloads []Payload
 
-	// Only target URL-like parameters
-	nameLower := strings.ToLower(param.Name)
-	if !strings.Contains(nameLower, "url") &&
-		!strings.Contains(nameLower, "uri") &&
-		!strings.Contains(nameLower, "path") &&
-		!strings.Contains(nameLower, "dest") &&
-		!strings.Contains(nameLower, "redirect") &&
-		!strings.Contains(nameLower, "link") &&
-		!strings.Contains(nameLower, "src") &&
-		!strings.Contains(nameLower, "source") {
+	// Only target parameters that look like they accept URLs
+	if !isSSRFCandidate(param) {
 		return payloads
 	}
 
@@ -331,6 +324,59 @@ var ssrfPayloads = []struct {
 	{"file:///etc/passwd", "File protocol"},
 	{"gopher://127.0.0.1:6379/_INFO", "Gopher Redis"},
 	{"dict://127.0.0.1:6379/INFO", "Dict protocol"},
+}
+
+// isSSRFCandidate checks whether a parameter is likely to accept URL values,
+// using name patterns, OpenAPI format hints, and example values.
+func isSSRFCandidate(param *types.Parameter) bool {
+	nameLower := strings.ToLower(param.Name)
+
+	// High confidence: exact name matches
+	exactNames := []string{
+		"url", "uri", "link", "href", "endpoint", "webhook", "callback",
+	}
+	for _, name := range exactNames {
+		if nameLower == name {
+			return true
+		}
+	}
+
+	// High confidence: name ends with a URL-related suffix
+	suffixes := []string{
+		"_url", "_uri", "_link", "_href", "_endpoint",
+	}
+	for _, suffix := range suffixes {
+		if strings.HasSuffix(nameLower, suffix) {
+			return true
+		}
+	}
+
+	// Medium confidence: name contains URL-related substrings
+	substrings := []string{
+		"redirect", "forward", "fetch", "load", "dest",
+		"src", "source", "target", "proxy",
+	}
+	for _, sub := range substrings {
+		if strings.Contains(nameLower, sub) {
+			return true
+		}
+	}
+
+	// OpenAPI format hint
+	formatLower := strings.ToLower(param.Format)
+	if formatLower == "uri" || formatLower == "url" {
+		return true
+	}
+
+	// Example value starts with http:// or https://
+	if param.Example != nil {
+		exampleStr := fmt.Sprintf("%v", param.Example)
+		if strings.HasPrefix(exampleStr, "http://") || strings.HasPrefix(exampleStr, "https://") {
+			return true
+		}
+	}
+
+	return false
 }
 
 // PathTraversalGenerator generates path traversal payloads

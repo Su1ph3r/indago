@@ -81,6 +81,13 @@ func (d *EnumerationDetector) Detect(result *fuzzer.FuzzResult, baseline *types.
 		return findings
 	}
 
+	// Only run differential response checks for payloads that could plausibly
+	// indicate enumeration. Injection payloads (SQLi, XSS, etc.) cause different
+	// server responses due to input validation, not user enumeration.
+	if !isEnumerationRelevantPayload(req.Payload.Type) {
+		return findings
+	}
+
 	// Check for differential responses between fuzz and baseline that indicate enumeration
 	if baseline != nil {
 		findings = append(findings, d.checkDifferentialResponse(resp, baseline, bodyLower, req)...)
@@ -147,7 +154,8 @@ func (d *EnumerationDetector) checkDifferentialResponse(resp, baseline *types.HT
 
 	// Different status codes on an auth endpoint for different inputs suggest enumeration
 	if resp.StatusCode != baseline.StatusCode &&
-		isClientError(resp.StatusCode) && isClientError(baseline.StatusCode) {
+		isClientError(resp.StatusCode) && isClientError(baseline.StatusCode) &&
+		isEnumerationRelevantTransition(resp.StatusCode, baseline.StatusCode) {
 		findings = append(findings, types.Finding{
 			ID:          generateID(),
 			Type:        types.AttackEnumeration,
@@ -169,12 +177,12 @@ func (d *EnumerationDetector) checkDifferentialResponse(resp, baseline *types.HT
 			if diff < 0 {
 				diff = -diff
 			}
-			// Threshold: at least 10 bytes and 20% size difference
+			// Threshold: at least 50 bytes and 30% size difference
 			minLen := baseLen
 			if respLen < minLen {
 				minLen = respLen
 			}
-			if diff > 10 && float64(diff)/float64(minLen) > 0.2 {
+			if diff > 50 && float64(diff)/float64(minLen) > 0.3 {
 				findings = append(findings, types.Finding{
 					ID:          generateID(),
 					Type:        types.AttackEnumeration,
@@ -195,6 +203,34 @@ func (d *EnumerationDetector) checkDifferentialResponse(resp, baseline *types.HT
 // isClientError checks if a status code is a 4xx client error
 func isClientError(code int) bool {
 	return code >= 400 && code < 500
+}
+
+// isEnumerationRelevantPayload returns true for payload types where a
+// differential response might indicate enumeration behavior.
+func isEnumerationRelevantPayload(payloadType string) bool {
+	switch payloadType {
+	case types.AttackEnumeration, types.AttackAuthBypass, types.AttackBOLA,
+		types.AttackIDOR, types.AttackBFLA, "":
+		return true
+	default:
+		return false
+	}
+}
+
+// isEnumerationRelevantTransition returns true for status code transitions
+// that meaningfully indicate user enumeration. Filters out noise like
+// 400→401 which typically reflects input validation, not enumeration.
+func isEnumerationRelevantTransition(fuzzCode, baselineCode int) bool {
+	// 404 vs other 4xx is a strong signal: "not found" vs "unauthorized"
+	if fuzzCode == 404 || baselineCode == 404 {
+		return true
+	}
+	// 200 vs 4xx is a strong signal: success for valid, error for invalid
+	if (fuzzCode >= 200 && fuzzCode < 300) || (baselineCode >= 200 && baselineCode < 300) {
+		return true
+	}
+	// 4xx→4xx transitions like 400→401 or 401→403 are usually input validation noise
+	return false
 }
 
 // isRegistrationEndpoint checks if the endpoint path indicates a user registration

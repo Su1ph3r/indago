@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -513,6 +515,9 @@ func runScan(cmd *cobra.Command, args []string) error {
 	// Configure scan settings from flags
 	updateConfigFromFlags(cmd)
 
+	// Boost concurrency/rate-limit for local targets (e.g., Docker containers)
+	applyLocalTargetBoost(cmd, getTarget(endpoints))
+
 	// Load business rules if specified
 	rulesFile, _ := cmd.Flags().GetString("rules-file")
 	var ruleTestCases []rules.RuleTestCase
@@ -893,6 +898,11 @@ func runScan(cmd *cobra.Command, args []string) error {
 	processedCount := 0
 	verbose, _ := cmd.Flags().GetBool("verbose")
 
+	// Console dedup: prevent printing the same finding hundreds of times
+	consoleSeen := make(map[string]bool)
+	consoleSuppressed := 0
+	massAssignAuthBlocked := 0
+
 	if multiAuthExec != nil {
 		// Differential mode: fuzz with all auth contexts
 		diffEndpoints := make(map[string]struct{})
@@ -928,9 +938,15 @@ func runScan(cmd *cobra.Command, args []string) error {
 					extractor.ExtractFromResponse(fuzzResult.Response, endpointKey)
 				}
 
-				// Print findings as they're discovered
+				// Print findings as they're discovered (with dedup)
 				for _, f := range resultFindings {
-					printFindingWithVerbose(f, verbose)
+					key := consoleDedupKey(f)
+					if !consoleSeen[key] {
+						consoleSeen[key] = true
+						printFindingWithVerbose(f, verbose)
+					} else {
+						consoleSuppressed++
+					}
 				}
 			}
 
@@ -1029,9 +1045,22 @@ func runScan(cmd *cobra.Command, args []string) error {
 				printProgress(processedCount, len(fuzzRequests))
 			}
 
-			// Print findings as they're discovered
+			// Track mass assignment auth blocks
+			if result.Request.Payload.Type == types.AttackMassAssignment &&
+				result.Response != nil &&
+				(result.Response.StatusCode == 401 || result.Response.StatusCode == 403) {
+				massAssignAuthBlocked++
+			}
+
+			// Print findings as they're discovered (with dedup)
 			for _, f := range resultFindings {
-				printFindingWithVerbose(f, verbose)
+				key := consoleDedupKey(f)
+				if !consoleSeen[key] {
+					consoleSeen[key] = true
+					printFindingWithVerbose(f, verbose)
+				} else {
+					consoleSuppressed++
+				}
 			}
 		}
 	}
@@ -1057,12 +1086,25 @@ func runScan(cmd *cobra.Command, args []string) error {
 			findings = append(findings, resultFindings...)
 
 			for _, f := range resultFindings {
-				printFindingWithVerbose(f, verbose)
+				key := consoleDedupKey(f)
+				if !consoleSeen[key] {
+					consoleSeen[key] = true
+					printFindingWithVerbose(f, verbose)
+				} else {
+					consoleSuppressed++
+				}
 			}
 		}
 	}
 
 	endTime := time.Now()
+
+	if consoleSuppressed > 0 {
+		printInfo("Suppressed %d duplicate console findings (all retained in report)", consoleSuppressed)
+	}
+	if massAssignAuthBlocked > 10 {
+		printWarning("Mass assignment: %d payloads blocked by auth (401/403). Use --auth-header for better coverage.", massAssignAuthBlocked)
+	}
 
 	// Collect out-of-band callback results
 	if callbackServer != nil {
@@ -1384,6 +1426,54 @@ func getTarget(endpoints []types.Endpoint) string {
 	return endpoints[0].BaseURL
 }
 
+// isLocalTarget returns true if the target URL points to a local address
+// (localhost, 127.0.0.0/8, ::1, 0.0.0.0, or private Docker networks).
+func isLocalTarget(target string) bool {
+	if target == "" || target == "unknown" {
+		return false
+	}
+	u, err := url.Parse(target)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsUnspecified() ||
+		ip.IsPrivate() || ip.IsLinkLocalUnicast()
+}
+
+const (
+	localConcurrency = 50
+	localRateLimit   = 100.0
+)
+
+// applyLocalTargetBoost increases concurrency and rate limit for local targets
+// unless the user explicitly set those flags.
+func applyLocalTargetBoost(cmd *cobra.Command, target string) {
+	if !isLocalTarget(target) {
+		return
+	}
+	boosted := false
+	if !cmd.Flags().Changed("concurrency") {
+		config.Scan.Concurrency = localConcurrency
+		boosted = true
+	}
+	if !cmd.Flags().Changed("rate-limit") {
+		config.Scan.RateLimit = localRateLimit
+		boosted = true
+	}
+	if boosted {
+		printInfo("Local target detected (%s) — boosted to concurrency=%d, rate-limit=%.0f rps",
+			target, config.Scan.Concurrency, config.Scan.RateLimit)
+	}
+}
+
 // Printing functions
 
 func printBanner() {
@@ -1419,6 +1509,21 @@ func printError(format string, args ...interface{}) {
 func printProgress(current, total int) {
 	pct := float64(current) / float64(total) * 100
 	fmt.Printf("\r[*] Progress: %d/%d (%.1f%%)", current, total, pct)
+}
+
+// consoleDedupKey generates a dedup key for real-time console output.
+// Mirrors the logic in filter.go's dedupeKey: noise types dedupe by
+// METHOD:ENDPOINT:TYPE, vulnerability types keep the parameter.
+func consoleDedupKey(f types.Finding) string {
+	switch f.Type {
+	case "server_error", "error_triggered", "data_leak", "information_disclosure",
+		"missing_security_headers", "stack_trace_exposure", "file_path_disclosure",
+		"python_error", "database_error", "response_anomaly", "rate_limit_missing",
+		"enumeration":
+		return f.Method + ":" + f.Endpoint + ":" + f.Type
+	default:
+		return f.Method + ":" + f.Endpoint + ":" + f.Type + ":" + f.Parameter
+	}
 }
 
 func printFinding(f types.Finding) {

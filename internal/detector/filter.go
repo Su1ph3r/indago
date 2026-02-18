@@ -259,7 +259,8 @@ func (f *FindingFilter) dedupeKey(finding types.Finding) string {
 	switch finding.Type {
 	case "server_error", "error_triggered", "data_leak", "information_disclosure",
 		"missing_security_headers", "stack_trace_exposure", "file_path_disclosure",
-		"python_error", "database_error", "response_anomaly", "rate_limit_missing":
+		"python_error", "database_error", "response_anomaly", "rate_limit_missing",
+		"enumeration":
 		return strings.Join([]string{
 			finding.Method,
 			finding.Endpoint,
