@@ -1,6 +1,7 @@
 package detector
 
 import (
+	"strings"
 	"testing"
 	"time"
 

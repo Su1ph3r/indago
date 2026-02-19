@@ -5,6 +5,24 @@ All notable changes to Indago will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-02-19
+
+### Added
+- **Multi-signal SSRF detection**: Six independent detection methods — cloud metadata, DNS error leaks, status code anomalies, timing anomalies, content-length anomalies, and internal service fingerprinting
+- **SSRF baseline comparison**: All SSRF detectors now compare against baseline responses to suppress pre-existing patterns
+- **SSRF finding deduplication**: Prevents duplicate findings when multiple signals match the same evidence
+- **Service fingerprint detection**: Identifies Redis protocol, internal admin interfaces, framework error pages, internal hostnames/IPs, and AWS S3 errors in SSRF responses
+
+### Fixed
+- **Case-insensitive header lookup**: WWW-Authenticate header detection now uses case-insensitive matching instead of fragile dual-key lookup
+- **Regex compilation performance**: SSRF service fingerprint patterns are now compiled once at package initialization instead of per-call
+- **Content-length anomaly guard**: Added protection against negative `ContentLength` sentinel values; renamed misleading `absDiff` to `lengthDelta`
+- **Missing test import**: Added missing `strings` import in anomaly detector tests
+
+### Changed
+- **HTML report typography**: Applied ecosystem design system fonts — Jost for headings/body, Source Code Pro for monospace/severity badges
+- **SSRF signals fire independently**: Cloud metadata and DNS error detection are no longer mutually exclusive; all signals can fire simultaneously for richer evidence
+
 ## [1.4.0] - 2026-02-18
 
 ### Added

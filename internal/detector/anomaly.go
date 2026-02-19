@@ -12,6 +12,34 @@ import (
 	"github.com/su1ph3r/indago/pkg/types"
 )
 
+// ssrfServicePattern represents a service fingerprint regex pattern
+type ssrfServicePattern struct {
+	name       string
+	pattern    *regexp.Regexp
+	severity   string
+	confidence string
+}
+
+// ssrfServicePatterns are compiled once at package init to avoid per-call regex compilation
+var ssrfServicePatterns = []ssrfServicePattern{
+	{name: "Redis Protocol", pattern: regexp.MustCompile(`(?m)^(\+OK|\$\d+|-ERR)`), severity: types.SeverityHigh, confidence: types.ConfidenceHigh},
+	{name: "Internal Admin Interface", pattern: regexp.MustCompile(`<title>.*(?:Admin|Login|Dashboard|Jenkins|GitLab).*</title>`), severity: types.SeverityHigh, confidence: types.ConfidenceMedium},
+	{name: "Framework Error Page", pattern: regexp.MustCompile(`(?:Flask|Django|Tomcat|Node\.js|Express).*(?:Traceback|Exception|Error:|at )`), severity: types.SeverityMedium, confidence: types.ConfidenceMedium},
+	{name: "Internal Hostname/IP", pattern: regexp.MustCompile(`(?:localhost|127\.0\.0\.1|192\.168\.|10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2[0-9]|3[01])\.|\.local|\.internal)`), severity: types.SeverityHigh, confidence: types.ConfidenceMedium},
+	{name: "AWS S3 Error", pattern: regexp.MustCompile(`<Error><Code>|x-amz-request-id`), severity: types.SeverityMedium, confidence: types.ConfidenceMedium},
+}
+
+// getHeaderCaseInsensitive performs a case-insensitive header lookup
+func getHeaderCaseInsensitive(headers map[string]string, key string) string {
+	lowerKey := strings.ToLower(key)
+	for k, v := range headers {
+		if strings.ToLower(k) == lowerKey {
+			return v
+		}
+	}
+	return ""
+}
+
 // AnomalyDetector detects anomalies in responses
 type AnomalyDetector struct {
 	comparator   *fuzzer.ResponseComparator
@@ -1027,13 +1055,10 @@ func (d *AnomalyDetector) detectSSRFStatusAnomaly(result *fuzzer.FuzzResult, bas
 
 	// Pattern 3: Baseline 200 → Fuzz 401/403 with WWW-Authenticate (hit internal service requiring auth)
 	if baselineStatus == 200 && (fuzzStatus == 401 || fuzzStatus == 403) {
-		if authHeader, ok := resp.Headers["www-authenticate"]; ok || resp.Headers["WWW-Authenticate"] != "" {
+		authHeader := getHeaderCaseInsensitive(resp.Headers, "www-authenticate")
+		if authHeader != "" {
 			evidence := []string{fmt.Sprintf("Status transition: %d → %d", baselineStatus, fuzzStatus)}
-			if authHeader != "" {
-				evidence = append(evidence, fmt.Sprintf("WWW-Authenticate header: %s", authHeader))
-			} else if val := resp.Headers["WWW-Authenticate"]; val != "" {
-				evidence = append(evidence, fmt.Sprintf("WWW-Authenticate header: %s", val))
-			}
+			evidence = append(evidence, fmt.Sprintf("WWW-Authenticate header: %s", authHeader))
 			return &types.Finding{
 				ID:          generateID(),
 				Type:        types.AttackSSRF,
@@ -1090,15 +1115,15 @@ func (d *AnomalyDetector) detectSSRFContentAnomaly(result *fuzzer.FuzzResult, ba
 	fuzzLen := result.Response.ContentLength
 	baseLen := baseline.ContentLength
 
-	if baseLen == 0 {
-		return nil // Avoid division by zero
+	if baseLen <= 0 || fuzzLen <= 0 {
+		return nil // Avoid division by zero or negative sentinel values
 	}
 
 	lengthRatio := float64(fuzzLen) / float64(baseLen)
-	absDiff := fuzzLen - baseLen
+	lengthDelta := fuzzLen - baseLen
 
 	// Fuzz content-length ≥ 10x baseline AND absolute difference ≥ 1KB
-	if lengthRatio >= 10.0 && absDiff >= 1024 {
+	if lengthRatio >= 10.0 && lengthDelta >= 1024 {
 		return &types.Finding{
 			ID:          generateID(),
 			Type:        types.AttackSSRF,
@@ -1109,7 +1134,7 @@ func (d *AnomalyDetector) detectSSRFContentAnomaly(result *fuzzer.FuzzResult, ba
 			CWE:         "CWE-918",
 			Remediation: "Validate and filter server-side request responses. Implement size limits and content-type restrictions.",
 			Evidence: &types.Evidence{MatchedData: []string{
-				fmt.Sprintf("Baseline: %d bytes, Fuzz: %d bytes (delta: +%d, ratio: %.1fx)", baseLen, fuzzLen, absDiff, lengthRatio),
+				fmt.Sprintf("Baseline: %d bytes, Fuzz: %d bytes (delta: +%d, ratio: %.1fx)", baseLen, fuzzLen, lengthDelta, lengthRatio),
 			}},
 		}
 	}
@@ -1119,28 +1144,7 @@ func (d *AnomalyDetector) detectSSRFContentAnomaly(result *fuzzer.FuzzResult, ba
 
 // detectSSRFServiceFingerprint detects internal service response patterns
 func (d *AnomalyDetector) detectSSRFServiceFingerprint(resp *types.HTTPResponse, baseline *types.HTTPResponse) *types.Finding {
-	// Service fingerprint patterns
-	type servicePattern struct {
-		name       string
-		pattern    *regexp.Regexp
-		severity   string
-		confidence string
-	}
-
-	patterns := []servicePattern{
-		// Redis RESP protocol
-		{name: "Redis Protocol", pattern: regexp.MustCompile(`(?m)^(\+OK|\$\d+|-ERR)`), severity: types.SeverityHigh, confidence: types.ConfidenceHigh},
-		// Internal admin interfaces
-		{name: "Internal Admin Interface", pattern: regexp.MustCompile(`<title>.*(?:Admin|Login|Dashboard|Jenkins|GitLab).*</title>`), severity: types.SeverityHigh, confidence: types.ConfidenceMedium},
-		// Framework error pages with stack traces
-		{name: "Framework Error Page", pattern: regexp.MustCompile(`(?:Flask|Django|Tomcat|Node\.js|Express).*(?:Traceback|Exception|Error:|at )`), severity: types.SeverityMedium, confidence: types.ConfidenceMedium},
-		// Internal hostnames/IPs
-		{name: "Internal Hostname/IP", pattern: regexp.MustCompile(`(?:localhost|127\.0\.0\.1|192\.168\.|10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2[0-9]|3[01])\.|\.local|\.internal)`), severity: types.SeverityHigh, confidence: types.ConfidenceMedium},
-		// AWS S3 error responses
-		{name: "AWS S3 Error", pattern: regexp.MustCompile(`<Error><Code>|x-amz-request-id`), severity: types.SeverityMedium, confidence: types.ConfidenceMedium},
-	}
-
-	for _, p := range patterns {
+	for _, p := range ssrfServicePatterns {
 		if p.pattern.MatchString(resp.Body) {
 			// Only flag if baseline doesn't match the same pattern
 			if baseline == nil || !p.pattern.MatchString(baseline.Body) {
