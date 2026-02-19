@@ -252,6 +252,301 @@ func TestAnomalyDetector_SSRF(t *testing.T) {
 			}
 		}
 	})
+
+	// Unit 1: Baseline comparison for cloud metadata
+	t.Run("baseline_contains_metadata_no_finding", func(t *testing.T) {
+		baseline := &types.HTTPResponse{
+			StatusCode: 200,
+			Body:       `{"ami-id": "ami-12345", "instance-id": "i-abcdef"}`, // Baseline already has metadata
+		}
+		result := &fuzzer.FuzzResult{
+			Request: &payloads.FuzzRequest{
+				Endpoint: types.Endpoint{Method: "GET", Path: "/fetch"},
+				Payload: payloads.Payload{Type: types.AttackSSRF, Value: "http://169.254.169.254/"},
+			},
+			Response: &types.HTTPResponse{
+				StatusCode: 200,
+				Body:       `{"ami-id": "ami-12345", "instance-id": "i-abcdef"}`, // Same metadata in fuzz
+			},
+		}
+		findings := d.Detect(result, baseline)
+		for _, f := range findings {
+			if f.Type == types.AttackSSRF && strings.Contains(f.Title, "Cloud Metadata") {
+				t.Error("should not flag metadata when baseline also contains it")
+			}
+		}
+	})
+
+	// Unit 2: Baseline comparison for DNS errors
+	t.Run("baseline_contains_dns_error_no_finding", func(t *testing.T) {
+		baseline := &types.HTTPResponse{
+			StatusCode: 500,
+			Body:       `could not resolve host: internal.corp`, // Baseline has DNS error
+		}
+		result := &fuzzer.FuzzResult{
+			Request: &payloads.FuzzRequest{
+				Endpoint: types.Endpoint{Method: "GET", Path: "/fetch"},
+				Payload: payloads.Payload{Type: types.AttackSSRF, Value: "http://internal.corp/"},
+			},
+			Response: &types.HTTPResponse{
+				StatusCode: 500,
+				Body:       `could not resolve host: internal.corp`, // Same DNS error
+			},
+		}
+		findings := d.Detect(result, baseline)
+		for _, f := range findings {
+			if f.Type == types.AttackSSRF && strings.Contains(f.Title, "DNS") {
+				t.Error("should not flag DNS error when baseline also contains it")
+			}
+		}
+	})
+
+	// Unit 3: Multiple signals can fire simultaneously
+	t.Run("multiple_signals_detected", func(t *testing.T) {
+		result := &fuzzer.FuzzResult{
+			Request: &payloads.FuzzRequest{
+				Endpoint: types.Endpoint{Method: "GET", Path: "/fetch"},
+				Payload: payloads.Payload{Type: types.AttackSSRF, Value: "http://169.254.169.254/"},
+			},
+			Response: &types.HTTPResponse{
+				StatusCode: 200,
+				Body:       `{"ami-id": "ami-12345"} could not resolve host: foo`, // Both metadata AND DNS error
+			},
+		}
+		findings := d.Detect(result, nil)
+		ssrfCount := 0
+		for _, f := range findings {
+			if f.Type == types.AttackSSRF {
+				ssrfCount++
+			}
+		}
+		if ssrfCount < 2 {
+			t.Errorf("expected at least 2 SSRF findings (metadata + DNS error), got %d", ssrfCount)
+		}
+	})
+
+	// Unit 4: Status code anomaly detection
+	t.Run("status_anomaly_200_to_500", func(t *testing.T) {
+		baseline := &types.HTTPResponse{StatusCode: 200, Body: "OK"}
+		result := &fuzzer.FuzzResult{
+			Request: &payloads.FuzzRequest{
+				Endpoint: types.Endpoint{Method: "GET", Path: "/fetch"},
+				Payload: payloads.Payload{Type: types.AttackSSRF, Value: "http://internal.service/"},
+			},
+			Response: &types.HTTPResponse{StatusCode: 500, Body: "Internal Server Error"},
+		}
+		findings := d.Detect(result, baseline)
+		found := false
+		for _, f := range findings {
+			if f.Type == types.AttackSSRF && strings.Contains(f.Title, "Server Error") {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("expected SSRF finding for 200→500 status transition")
+		}
+	})
+
+	t.Run("status_anomaly_403_to_200", func(t *testing.T) {
+		baseline := &types.HTTPResponse{StatusCode: 403, Body: "Forbidden"}
+		result := &fuzzer.FuzzResult{
+			Request: &payloads.FuzzRequest{
+				Endpoint: types.Endpoint{Method: "GET", Path: "/fetch"},
+				Payload: payloads.Payload{Type: types.AttackSSRF, Value: "http://internal.service/"},
+			},
+			Response: &types.HTTPResponse{StatusCode: 200, Body: "Secret data"},
+		}
+		findings := d.Detect(result, baseline)
+		found := false
+		for _, f := range findings {
+			if f.Type == types.AttackSSRF && strings.Contains(f.Title, "Forbidden Resource") {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("expected SSRF finding for 403→200 status transition")
+		}
+	})
+
+	t.Run("status_anomaly_200_to_401_with_auth_header", func(t *testing.T) {
+		baseline := &types.HTTPResponse{StatusCode: 200, Body: "OK"}
+		result := &fuzzer.FuzzResult{
+			Request: &payloads.FuzzRequest{
+				Endpoint: types.Endpoint{Method: "GET", Path: "/fetch"},
+				Payload: payloads.Payload{Type: types.AttackSSRF, Value: "http://internal.service/"},
+			},
+			Response: &types.HTTPResponse{
+				StatusCode: 401,
+				Body:       "Unauthorized",
+				Headers:    map[string]string{"www-authenticate": "Basic realm=\"Internal\""},
+			},
+		}
+		findings := d.Detect(result, baseline)
+		found := false
+		for _, f := range findings {
+			if f.Type == types.AttackSSRF && strings.Contains(f.Title, "Authentication Challenge") {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("expected SSRF finding for 200→401 with WWW-Authenticate header")
+		}
+	})
+
+	// Unit 5: Timing anomaly detection
+	t.Run("timing_anomaly_detected", func(t *testing.T) {
+		baseline := &types.HTTPResponse{
+			StatusCode:   200,
+			Body:         "OK",
+			ResponseTime: 500 * time.Millisecond, // Fast baseline
+		}
+		result := &fuzzer.FuzzResult{
+			Request: &payloads.FuzzRequest{
+				Endpoint: types.Endpoint{Method: "GET", Path: "/fetch"},
+				Payload: payloads.Payload{Type: types.AttackSSRF, Value: "http://internal.service/"},
+			},
+			Response: &types.HTTPResponse{StatusCode: 200, Body: "OK"},
+			Duration: 5 * time.Second, // Slow fuzz response
+		}
+		findings := d.Detect(result, baseline)
+		found := false
+		for _, f := range findings {
+			if f.Type == types.AttackSSRF && strings.Contains(f.Title, "Timing") {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("expected SSRF finding for timing anomaly (5s vs 0.5s)")
+		}
+	})
+
+	// Unit 6: Content-length anomaly detection
+	t.Run("content_anomaly_detected", func(t *testing.T) {
+		baseline := &types.HTTPResponse{
+			StatusCode:    200,
+			Body:          "OK",
+			ContentLength: 100, // Small baseline
+		}
+		result := &fuzzer.FuzzResult{
+			Request: &payloads.FuzzRequest{
+				Endpoint: types.Endpoint{Method: "GET", Path: "/fetch"},
+				Payload: payloads.Payload{Type: types.AttackSSRF, Value: "http://internal.service/"},
+			},
+			Response: &types.HTTPResponse{
+				StatusCode:    200,
+				Body:          strings.Repeat("a", 10000),
+				ContentLength: 10000, // 100x larger
+			},
+		}
+		findings := d.Detect(result, baseline)
+		found := false
+		for _, f := range findings {
+			if f.Type == types.AttackSSRF && strings.Contains(f.Title, "Content Length") {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("expected SSRF finding for content-length anomaly (10KB vs 100B)")
+		}
+	})
+
+	// Unit 7: Service fingerprint detection
+	t.Run("service_fingerprint_redis", func(t *testing.T) {
+		result := &fuzzer.FuzzResult{
+			Request: &payloads.FuzzRequest{
+				Endpoint: types.Endpoint{Method: "GET", Path: "/fetch"},
+				Payload: payloads.Payload{Type: types.AttackSSRF, Value: "http://internal.redis:6379/"},
+			},
+			Response: &types.HTTPResponse{
+				StatusCode: 200,
+				Body:       "+OK\r\n$5\r\nHello\r\n", // Redis RESP protocol
+			},
+		}
+		findings := d.Detect(result, nil)
+		found := false
+		for _, f := range findings {
+			if f.Type == types.AttackSSRF && strings.Contains(f.Title, "Redis") {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("expected SSRF finding for Redis protocol fingerprint")
+		}
+	})
+
+	t.Run("service_fingerprint_internal_hostname", func(t *testing.T) {
+		result := &fuzzer.FuzzResult{
+			Request: &payloads.FuzzRequest{
+				Endpoint: types.Endpoint{Method: "GET", Path: "/fetch"},
+				Payload: payloads.Payload{Type: types.AttackSSRF, Value: "http://localhost/"},
+			},
+			Response: &types.HTTPResponse{
+				StatusCode: 200,
+				Body:       `<html><body>Internal service at 192.168.1.100</body></html>`,
+			},
+		}
+		findings := d.Detect(result, nil)
+		found := false
+		for _, f := range findings {
+			if f.Type == types.AttackSSRF && strings.Contains(f.Title, "Internal Hostname") {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("expected SSRF finding for internal hostname/IP fingerprint")
+		}
+	})
+
+	t.Run("service_fingerprint_admin_interface", func(t *testing.T) {
+		result := &fuzzer.FuzzResult{
+			Request: &payloads.FuzzRequest{
+				Endpoint: types.Endpoint{Method: "GET", Path: "/fetch"},
+				Payload: payloads.Payload{Type: types.AttackSSRF, Value: "http://internal/admin/"},
+			},
+			Response: &types.HTTPResponse{
+				StatusCode: 200,
+				Body:       `<html><head><title>Admin Dashboard</title></head></html>`,
+			},
+		}
+		findings := d.Detect(result, nil)
+		found := false
+		for _, f := range findings {
+			if f.Type == types.AttackSSRF && strings.Contains(f.Title, "Admin Interface") {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("expected SSRF finding for admin interface fingerprint")
+		}
+	})
+
+	// Unit 9: No false positives on legitimate responses
+	t.Run("no_false_positives_legitimate_responses", func(t *testing.T) {
+		baseline := &types.HTTPResponse{
+			StatusCode:    200,
+			Body:          `{"status": "ok", "price": 49}`,
+			ContentLength: 30,
+			ResponseTime:  100 * time.Millisecond,
+		}
+		result := &fuzzer.FuzzResult{
+			Request: &payloads.FuzzRequest{
+				Endpoint: types.Endpoint{Method: "GET", Path: "/api/products"},
+				Payload: payloads.Payload{Type: types.AttackSSRF, Value: "http://example.com/"},
+			},
+			Response: &types.HTTPResponse{
+				StatusCode:    200,
+				Body:          `{"status": "ok", "price": 49}`,
+				ContentLength: 30,
+			},
+			Duration: 120 * time.Millisecond,
+		}
+		findings := d.Detect(result, baseline)
+		for _, f := range findings {
+			if f.Type == types.AttackSSRF {
+				t.Errorf("unexpected SSRF finding for legitimate response: %s", f.Title)
+			}
+		}
+	})
 }
 
 func TestAnomalyDetector_SSTI(t *testing.T) {

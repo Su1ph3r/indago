@@ -137,6 +137,9 @@ const htmlTemplate = `<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{.Title}}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500;600;700;800&family=Source+Code+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
             --critical: #dc2626;
@@ -154,7 +157,7 @@ const htmlTemplate = `<!DOCTYPE html>
         * { box-sizing: border-box; margin: 0; padding: 0; }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: 'Jost', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: var(--bg);
             color: var(--text);
             line-height: 1.6;
@@ -170,7 +173,8 @@ const htmlTemplate = `<!DOCTYPE html>
             border-bottom: 1px solid var(--border);
         }
 
-        h1 { font-size: 2rem; margin-bottom: 0.5rem; }
+        h1 { font-size: 2rem; margin-bottom: 0.5rem; font-weight: 800; letter-spacing: -0.02em; }
+        h2 { font-weight: 700; letter-spacing: -0.01em; }
         .subtitle { color: var(--text-muted); }
 
         .summary {
@@ -222,6 +226,7 @@ const htmlTemplate = `<!DOCTYPE html>
         .severity-badge {
             padding: 0.25rem 0.75rem;
             border-radius: 4px;
+            font-family: 'Source Code Pro', monospace;
             font-size: 0.75rem;
             font-weight: 600;
             text-transform: uppercase;
@@ -234,7 +239,7 @@ const htmlTemplate = `<!DOCTYPE html>
         .severity-badge.info { background: var(--info); }
 
         .finding-title { flex: 1; font-weight: 600; }
-        .finding-endpoint { color: var(--text-muted); font-family: monospace; font-size: 0.875rem; }
+        .finding-endpoint { color: var(--text-muted); font-family: 'Source Code Pro', monospace; font-size: 0.875rem; }
 
         .finding-details {
             padding: 1.5rem;
@@ -252,7 +257,7 @@ const htmlTemplate = `<!DOCTYPE html>
             background: var(--bg);
             padding: 1rem;
             border-radius: 4px;
-            font-family: monospace;
+            font-family: 'Source Code Pro', monospace;
             font-size: 0.875rem;
             overflow-x: auto;
             white-space: pre-wrap;
@@ -315,7 +320,7 @@ const htmlTemplate = `<!DOCTYPE html>
             background: rgba(0,0,0,0.3);
             padding: 0.75rem;
             border-radius: 4px;
-            font-family: monospace;
+            font-family: 'Source Code Pro', monospace;
             font-size: 0.8rem;
             max-height: 200px;
             overflow-y: auto;
@@ -341,7 +346,7 @@ const htmlTemplate = `<!DOCTYPE html>
             padding: 0.25rem 0.5rem;
             border-radius: 4px;
             font-size: 0.75rem;
-            font-family: monospace;
+            font-family: 'Source Code Pro', monospace;
         }
 
         .reproduce-section {
@@ -371,7 +376,7 @@ const htmlTemplate = `<!DOCTYPE html>
             background: rgba(0,0,0,0.3);
             padding: 1rem;
             border-radius: 4px;
-            font-family: monospace;
+            font-family: 'Source Code Pro', monospace;
             font-size: 0.8rem;
             overflow-x: auto;
             white-space: pre-wrap;

@@ -208,50 +208,8 @@ func (d *AnomalyDetector) Detect(result *fuzzer.FuzzResult, baseline *types.HTTP
 		}
 
 	case types.AttackSSRF:
-		bodyLower := strings.ToLower(resp.Body)
-		// Check for cloud metadata content indicators
-		ssrfFound := false
-		ssrfIndicators := []string{"ami-id", "instance-id", "iam/security-credentials", "169.254.169.254"}
-		var ssrfMatchedIndicators []string
-		for _, indicator := range ssrfIndicators {
-			if strings.Contains(bodyLower, indicator) {
-				ssrfMatchedIndicators = append(ssrfMatchedIndicators, fmt.Sprintf("Cloud metadata indicator: %s", indicator))
-			}
-		}
-		if len(ssrfMatchedIndicators) > 0 {
-			ssrfFound = true
-			findings = append(findings, types.Finding{
-				ID:          generateID(),
-				Type:        types.AttackSSRF,
-				Severity:    types.SeverityCritical,
-				Confidence:  types.ConfidenceHigh,
-				Title:       "SSRF - Cloud Metadata Access",
-				Description: "Response contains cloud metadata indicators, suggesting server-side request forgery to internal services",
-				CWE:         "CWE-918",
-				Remediation: "Validate and sanitize all user-supplied URLs. Block requests to internal/metadata IPs. Use allowlists for external requests.",
-				Evidence:    &types.Evidence{MatchedData: ssrfMatchedIndicators},
-			})
-		}
-		// Check for DNS resolution errors suggesting internal hostname probing
-		if !ssrfFound {
-			dnsErrors := []string{"resolve host", "name resolution", "no such host", "getaddrinfo"}
-			for _, errStr := range dnsErrors {
-				if strings.Contains(bodyLower, errStr) {
-					findings = append(findings, types.Finding{
-						ID:          generateID(),
-						Type:        types.AttackSSRF,
-						Severity:    types.SeverityMedium,
-						Confidence:  types.ConfidenceMedium,
-						Title:       "SSRF - DNS Resolution Error Leak",
-						Description: "DNS resolution error leaked in response, indicating the server attempted to resolve the attacker-supplied URL",
-						CWE:         "CWE-918",
-						Remediation: "Do not expose DNS resolution errors to users. Validate URLs before making server-side requests.",
-						Evidence:    &types.Evidence{MatchedData: []string{fmt.Sprintf("DNS error pattern: %s", errStr)}},
-					})
-					break
-				}
-			}
-		}
+		ssrfFindings := d.detectSSRF(result, baseline)
+		findings = append(findings, ssrfFindings...)
 
 	case types.AttackSSTI:
 		// SSTI generators send mathematically verifiable payloads
@@ -931,6 +889,310 @@ func (d *AnomalyDetector) Detect(result *fuzzer.FuzzResult, baseline *types.HTTP
 	}
 
 	return findings
+}
+
+// detectSSRF performs comprehensive SSRF detection with multiple signals
+func (d *AnomalyDetector) detectSSRF(result *fuzzer.FuzzResult, baseline *types.HTTPResponse) []types.Finding {
+	var findings []types.Finding
+	resp := result.Response
+
+	// Run all detection methods
+	if f := d.detectSSRFCloudMetadata(resp, baseline); f != nil {
+		findings = append(findings, *f)
+	}
+	if f := d.detectSSRFDNSError(resp, baseline); f != nil {
+		findings = append(findings, *f)
+	}
+	if f := d.detectSSRFStatusAnomaly(result, baseline); f != nil {
+		findings = append(findings, *f)
+	}
+	if f := d.detectSSRFTimingAnomaly(result, baseline); f != nil {
+		findings = append(findings, *f)
+	}
+	if f := d.detectSSRFContentAnomaly(result, baseline); f != nil {
+		findings = append(findings, *f)
+	}
+	if f := d.detectSSRFServiceFingerprint(resp, baseline); f != nil {
+		findings = append(findings, *f)
+	}
+
+	// Deduplicate findings with identical evidence
+	return deduplicateFindings(findings)
+}
+
+// detectSSRFCloudMetadata checks for cloud metadata indicators (with baseline comparison)
+func (d *AnomalyDetector) detectSSRFCloudMetadata(resp *types.HTTPResponse, baseline *types.HTTPResponse) *types.Finding {
+	bodyLower := strings.ToLower(resp.Body)
+	baselineBodyLower := ""
+	if baseline != nil {
+		baselineBodyLower = strings.ToLower(baseline.Body)
+	}
+
+	ssrfIndicators := []string{"ami-id", "instance-id", "iam/security-credentials", "169.254.169.254"}
+	var ssrfMatchedIndicators []string
+	for _, indicator := range ssrfIndicators {
+		if strings.Contains(bodyLower, indicator) {
+			// Only flag if baseline doesn't contain the same indicator (avoid false positives)
+			if baseline == nil || !strings.Contains(baselineBodyLower, indicator) {
+				ssrfMatchedIndicators = append(ssrfMatchedIndicators, fmt.Sprintf("Cloud metadata indicator: %s", indicator))
+			}
+		}
+	}
+
+	if len(ssrfMatchedIndicators) > 0 {
+		return &types.Finding{
+			ID:          generateID(),
+			Type:        types.AttackSSRF,
+			Severity:    types.SeverityCritical,
+			Confidence:  types.ConfidenceHigh,
+			Title:       "SSRF - Cloud Metadata Access",
+			Description: "Response contains cloud metadata indicators, suggesting server-side request forgery to internal services",
+			CWE:         "CWE-918",
+			Remediation: "Validate and sanitize all user-supplied URLs. Block requests to internal/metadata IPs. Use allowlists for external requests.",
+			Evidence:    &types.Evidence{MatchedData: ssrfMatchedIndicators},
+		}
+	}
+	return nil
+}
+
+// detectSSRFDNSError checks for DNS resolution errors (with baseline comparison)
+func (d *AnomalyDetector) detectSSRFDNSError(resp *types.HTTPResponse, baseline *types.HTTPResponse) *types.Finding {
+	bodyLower := strings.ToLower(resp.Body)
+	baselineBodyLower := ""
+	if baseline != nil {
+		baselineBodyLower = strings.ToLower(baseline.Body)
+	}
+
+	dnsErrors := []string{"resolve host", "name resolution", "no such host", "getaddrinfo"}
+	for _, errStr := range dnsErrors {
+		if strings.Contains(bodyLower, errStr) {
+			// Only flag if baseline doesn't contain the same error pattern
+			if baseline == nil || !strings.Contains(baselineBodyLower, errStr) {
+				return &types.Finding{
+					ID:          generateID(),
+					Type:        types.AttackSSRF,
+					Severity:    types.SeverityMedium,
+					Confidence:  types.ConfidenceMedium,
+					Title:       "SSRF - DNS Resolution Error Leak",
+					Description: "DNS resolution error leaked in response, indicating the server attempted to resolve the attacker-supplied URL",
+					CWE:         "CWE-918",
+					Remediation: "Do not expose DNS resolution errors to users. Validate URLs before making server-side requests.",
+					Evidence:    &types.Evidence{MatchedData: []string{fmt.Sprintf("DNS error pattern: %s", errStr)}},
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// detectSSRFStatusAnomaly detects suspicious status code changes indicating SSRF
+func (d *AnomalyDetector) detectSSRFStatusAnomaly(result *fuzzer.FuzzResult, baseline *types.HTTPResponse) *types.Finding {
+	if baseline == nil {
+		return nil
+	}
+
+	resp := result.Response
+	baselineStatus := baseline.StatusCode
+	fuzzStatus := resp.StatusCode
+
+	// Pattern 1: Baseline 200 → Fuzz 500/502/503 (server error reaching internal service)
+	if baselineStatus == 200 && (fuzzStatus == 500 || fuzzStatus == 502 || fuzzStatus == 503) {
+		return &types.Finding{
+			ID:          generateID(),
+			Type:        types.AttackSSRF,
+			Severity:    types.SeverityHigh,
+			Confidence:  types.ConfidenceMedium,
+			Title:       "SSRF - Server Error on Internal Request",
+			Description: fmt.Sprintf("Status changed from %d to %d, suggesting the server attempted to reach an internal service", baselineStatus, fuzzStatus),
+			CWE:         "CWE-918",
+			Remediation: "Validate and sanitize all user-supplied URLs. Block requests to internal/private IP ranges.",
+			Evidence:    &types.Evidence{MatchedData: []string{fmt.Sprintf("Status transition: %d → %d", baselineStatus, fuzzStatus)}},
+		}
+	}
+
+	// Pattern 2: Baseline 4xx → Fuzz 200 (accessed previously-forbidden resource)
+	if baselineStatus >= 400 && baselineStatus < 500 && fuzzStatus == 200 {
+		return &types.Finding{
+			ID:          generateID(),
+			Type:        types.AttackSSRF,
+			Severity:    types.SeverityCritical,
+			Confidence:  types.ConfidenceHigh,
+			Title:       "SSRF - Access to Previously Forbidden Resource",
+			Description: fmt.Sprintf("Status changed from %d to %d, indicating successful access to a previously restricted resource", baselineStatus, fuzzStatus),
+			CWE:         "CWE-918",
+			Remediation: "Implement strict URL validation and allowlists. Never trust user-supplied URLs for server-side requests.",
+			Evidence:    &types.Evidence{MatchedData: []string{fmt.Sprintf("Status transition: %d → %d", baselineStatus, fuzzStatus)}},
+		}
+	}
+
+	// Pattern 3: Baseline 200 → Fuzz 401/403 with WWW-Authenticate (hit internal service requiring auth)
+	if baselineStatus == 200 && (fuzzStatus == 401 || fuzzStatus == 403) {
+		if authHeader, ok := resp.Headers["www-authenticate"]; ok || resp.Headers["WWW-Authenticate"] != "" {
+			evidence := []string{fmt.Sprintf("Status transition: %d → %d", baselineStatus, fuzzStatus)}
+			if authHeader != "" {
+				evidence = append(evidence, fmt.Sprintf("WWW-Authenticate header: %s", authHeader))
+			} else if val := resp.Headers["WWW-Authenticate"]; val != "" {
+				evidence = append(evidence, fmt.Sprintf("WWW-Authenticate header: %s", val))
+			}
+			return &types.Finding{
+				ID:          generateID(),
+				Type:        types.AttackSSRF,
+				Severity:    types.SeverityHigh,
+				Confidence:  types.ConfidenceMedium,
+				Title:       "SSRF - Internal Service Authentication Challenge",
+				Description: "Server received authentication challenge from internal service, confirming SSRF capability",
+				CWE:         "CWE-918",
+				Remediation: "Block requests to internal services. Implement URL allowlists for external resources only.",
+				Evidence:    &types.Evidence{MatchedData: evidence},
+			}
+		}
+	}
+
+	return nil
+}
+
+// detectSSRFTimingAnomaly detects slow responses indicating internal network probes
+func (d *AnomalyDetector) detectSSRFTimingAnomaly(result *fuzzer.FuzzResult, baseline *types.HTTPResponse) *types.Finding {
+	if baseline == nil || baseline.ResponseTime == 0 {
+		return nil
+	}
+
+	// Fuzz response time ≥ 3 seconds AND baseline < 1 second: likely internal network probe
+	if result.Duration >= 3*time.Second && baseline.ResponseTime < 1*time.Second {
+		timingRatio := float64(result.Duration) / float64(baseline.ResponseTime)
+		if timingRatio >= 3.0 {
+			delta := result.Duration - baseline.ResponseTime
+			return &types.Finding{
+				ID:          generateID(),
+				Type:        types.AttackSSRF,
+				Severity:    types.SeverityMedium,
+				Confidence:  types.ConfidenceMedium,
+				Title:       "SSRF - Timing Anomaly",
+				Description: "Response time significantly increased, suggesting internal network probe or timeout",
+				CWE:         "CWE-918",
+				Remediation: "Validate URLs against allowlists. Implement timeouts for server-side requests.",
+				Evidence: &types.Evidence{MatchedData: []string{
+					fmt.Sprintf("Baseline: %v, Fuzz: %v (delta: +%v, ratio: %.1fx)", baseline.ResponseTime, result.Duration, delta, timingRatio),
+				}},
+			}
+		}
+	}
+
+	return nil
+}
+
+// detectSSRFContentAnomaly detects significant content-length increases suggesting data exposure
+func (d *AnomalyDetector) detectSSRFContentAnomaly(result *fuzzer.FuzzResult, baseline *types.HTTPResponse) *types.Finding {
+	if baseline == nil {
+		return nil
+	}
+
+	fuzzLen := result.Response.ContentLength
+	baseLen := baseline.ContentLength
+
+	if baseLen == 0 {
+		return nil // Avoid division by zero
+	}
+
+	lengthRatio := float64(fuzzLen) / float64(baseLen)
+	absDiff := fuzzLen - baseLen
+
+	// Fuzz content-length ≥ 10x baseline AND absolute difference ≥ 1KB
+	if lengthRatio >= 10.0 && absDiff >= 1024 {
+		return &types.Finding{
+			ID:          generateID(),
+			Type:        types.AttackSSRF,
+			Severity:    types.SeverityMedium,
+			Confidence:  types.ConfidenceMedium,
+			Title:       "SSRF - Content Length Anomaly",
+			Description: "Response size significantly increased, suggesting data exposure from internal service",
+			CWE:         "CWE-918",
+			Remediation: "Validate and filter server-side request responses. Implement size limits and content-type restrictions.",
+			Evidence: &types.Evidence{MatchedData: []string{
+				fmt.Sprintf("Baseline: %d bytes, Fuzz: %d bytes (delta: +%d, ratio: %.1fx)", baseLen, fuzzLen, absDiff, lengthRatio),
+			}},
+		}
+	}
+
+	return nil
+}
+
+// detectSSRFServiceFingerprint detects internal service response patterns
+func (d *AnomalyDetector) detectSSRFServiceFingerprint(resp *types.HTTPResponse, baseline *types.HTTPResponse) *types.Finding {
+	// Service fingerprint patterns
+	type servicePattern struct {
+		name       string
+		pattern    *regexp.Regexp
+		severity   string
+		confidence string
+	}
+
+	patterns := []servicePattern{
+		// Redis RESP protocol
+		{name: "Redis Protocol", pattern: regexp.MustCompile(`(?m)^(\+OK|\$\d+|-ERR)`), severity: types.SeverityHigh, confidence: types.ConfidenceHigh},
+		// Internal admin interfaces
+		{name: "Internal Admin Interface", pattern: regexp.MustCompile(`<title>.*(?:Admin|Login|Dashboard|Jenkins|GitLab).*</title>`), severity: types.SeverityHigh, confidence: types.ConfidenceMedium},
+		// Framework error pages with stack traces
+		{name: "Framework Error Page", pattern: regexp.MustCompile(`(?:Flask|Django|Tomcat|Node\.js|Express).*(?:Traceback|Exception|Error:|at )`), severity: types.SeverityMedium, confidence: types.ConfidenceMedium},
+		// Internal hostnames/IPs
+		{name: "Internal Hostname/IP", pattern: regexp.MustCompile(`(?:localhost|127\.0\.0\.1|192\.168\.|10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2[0-9]|3[01])\.|\.local|\.internal)`), severity: types.SeverityHigh, confidence: types.ConfidenceMedium},
+		// AWS S3 error responses
+		{name: "AWS S3 Error", pattern: regexp.MustCompile(`<Error><Code>|x-amz-request-id`), severity: types.SeverityMedium, confidence: types.ConfidenceMedium},
+	}
+
+	for _, p := range patterns {
+		if p.pattern.MatchString(resp.Body) {
+			// Only flag if baseline doesn't match the same pattern
+			if baseline == nil || !p.pattern.MatchString(baseline.Body) {
+				// Extract matched text for evidence (limit to 100 chars)
+				matched := p.pattern.FindString(resp.Body)
+				if len(matched) > 100 {
+					matched = matched[:100] + "..."
+				}
+
+				return &types.Finding{
+					ID:          generateID(),
+					Type:        types.AttackSSRF,
+					Severity:    p.severity,
+					Confidence:  p.confidence,
+					Title:       fmt.Sprintf("SSRF - %s Detected", p.name),
+					Description: fmt.Sprintf("Response contains fingerprint of internal service: %s", p.name),
+					CWE:         "CWE-918",
+					Remediation: "Block all requests to internal services and private IP ranges. Implement strict URL allowlists.",
+					Evidence:    &types.Evidence{MatchedData: []string{fmt.Sprintf("Service fingerprint: %s", matched)}},
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// deduplicateFindings removes findings with identical evidence strings
+func deduplicateFindings(findings []types.Finding) []types.Finding {
+	if len(findings) <= 1 {
+		return findings
+	}
+
+	seen := make(map[string]bool)
+	result := make([]types.Finding, 0, len(findings))
+
+	for _, f := range findings {
+		// Create key from evidence data
+		key := ""
+		if f.Evidence != nil && len(f.Evidence.MatchedData) > 0 {
+			key = strings.Join(f.Evidence.MatchedData, "|")
+		} else {
+			key = f.Title + "|" + f.Description
+		}
+
+		if !seen[key] {
+			seen[key] = true
+			result = append(result, f)
+		}
+	}
+
+	return result
 }
 
 // compareWithBaseline compares the response with a baseline
